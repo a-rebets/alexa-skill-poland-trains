@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Choose stations · Upcoming Trains</title>
+  <link rel="stylesheet" href="picker.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Upcoming Trains</p>
+    <h1>Choose your stations</h1>
+    <p class="lede">Pick up to five. Alexa reads the trains leaving in the next hour, in Europe/Warsaw time, with live delays when the feed is fresh.</p>
+    <p id="banner" class="banner" hidden></p>
+    <label class="search" for="q">Search
+      <input id="q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="lodz, warsaw central, krakow">
+    </label>
+    <ul id="results" class="results"></ul>
+    <section class="picked">
+      <h2>Selected <span id="count">0 of 5</span></h2>
+      <ul id="selected"></ul>
+    </section>
+    <button id="done" type="button" disabled>Done</button>
+    <pre id="token" hidden></pre>
+    <footer>
+      <p>No account is created here. Alexa stores a token that contains only the station codes you pick.</p>
+      <p>Timetable data: PKP Polskie Linie Kolejowe S.A. GTFS feed: <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>.</p>
+      <p><a href="privacy.html">Privacy</a></p>
+    </footer>
+  </main>
+  <script src="stations.js"></script>
+  <script src="picker.js"></script>
+</body>
+</html>
