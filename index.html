@@ -2,33 +2,50 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
   <title>Choose stations · Upcoming Trains</title>
-  <link rel="stylesheet" href="picker.css">
+  <link rel="stylesheet" href="picker.css?v=4">
 </head>
-<body>
+<body class="home">
   <main>
-    <p class="eyebrow">Upcoming Trains</p>
+    <header class="mast">
+      <svg class="mark" viewBox="0 0 48 48" width="40" height="40" aria-hidden="true" focusable="false">
+        <rect width="48" height="48" fill="#E10600"/>
+        <path fill="#fff" d="M11 18Q11 9 20 9h8q9 0 9 9v16q0 6-6 6H17q-6 0-6-6V18z"/>
+        <rect x="16" y="14" width="16" height="9" rx="1.8" fill="#E10600"/>
+        <circle cx="19" cy="32" r="2.6" fill="#E10600"/>
+        <circle cx="29" cy="32" r="2.6" fill="#E10600"/>
+      </svg>
+      <p class="brand">Upcoming Trains</p>
+    </header>
     <h1>Choose your stations</h1>
-    <p class="lede">Pick up to five. Alexa reads the trains leaving in the next hour, in Europe/Warsaw time, with live delays when the feed is fresh.</p>
+    <p class="lede">Pick up to five. Alexa reads departures in the next hour, Warsaw time, with live delays when the feed is fresh.</p>
     <p id="banner" class="banner" hidden></p>
-    <label class="search" for="q">Search
-      <input id="q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="lodz, warsaw central, krakow">
-    </label>
-    <ul id="results" class="results"></ul>
-    <section class="picked">
-      <h2>Selected <span id="count">0 of 5</span></h2>
-      <ul id="selected"></ul>
-    </section>
-    <button id="done" type="button" disabled>Done</button>
+    <form id="finder" class="finder" role="search" action="#">
+      <label class="sr" for="q">Search stations</label>
+      <input id="q" type="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" inputmode="search" placeholder="Warszawa, Kraków, Gdańsk">
+    </form>
+    <ul id="selected" class="chips" aria-label="Selected stations"></ul>
+    <p id="limit" class="limit" hidden></p>
+    <p id="live" class="sr" aria-live="polite"></p>
+    <p id="choice" class="sr" aria-live="polite"></p>
+    <ul id="results" class="results" aria-label="Stations"></ul>
     <pre id="token" hidden></pre>
     <footer>
-      <p>No account is created here. Alexa stores a token that contains only the station codes you pick.</p>
+      <p>No account is created here. Alexa stores only the station codes you pick.</p>
       <p>Timetable data: PKP Polskie Linie Kolejowe S.A. GTFS feed: <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>.</p>
       <p><a href="privacy.html">Privacy</a></p>
     </footer>
   </main>
+  <div class="dock">
+    <button id="done" type="button" disabled>Done</button>
+  </div>
+  <noscript>
+    <p class="banner">Turn on JavaScript to choose stations.</p>
+  </noscript>
   <script src="stations.js"></script>
-  <script src="picker.js?v=3"></script>
+  <script src="picker.js?v=4"></script>
 </body>
 </html>
