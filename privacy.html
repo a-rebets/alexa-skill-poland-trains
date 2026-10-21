@@ -2,21 +2,30 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
   <title>Privacy · Upcoming Trains</title>
-  <link rel="stylesheet" href="picker.css">
+  <link rel="stylesheet" href="picker.css?v=4">
 </head>
 <body>
-  <main>
-    <p class="eyebrow">Upcoming Trains</p>
+  <main class="prose">
+    <header class="mast">
+      <svg class="mark" viewBox="0 0 48 48" width="40" height="40" aria-hidden="true" focusable="false">
+        <rect width="48" height="48" fill="#E10600"/>
+        <path fill="#fff" d="M11 18Q11 9 20 9h8q9 0 9 9v16q0 6-6 6H17q-6 0-6-6V18z"/>
+        <rect x="16" y="14" width="16" height="9" rx="1.8" fill="#E10600"/>
+        <circle cx="19" cy="32" r="2.6" fill="#E10600"/>
+        <circle cx="29" cy="32" r="2.6" fill="#E10600"/>
+      </svg>
+      <p class="brand">Upcoming Trains</p>
+    </header>
     <h1>Privacy</h1>
-    <div class="picked" style="padding: 0.9rem 1rem 1.1rem; color: #1c1915;">
-      <p>This page is the station picker for a personal Alexa skill. It does not create an account, and it has no server of its own.</p>
-      <p>When you tap Done, the page hands Alexa an access token. That token contains only the station codes you selected. Alexa stores it on your Amazon account and sends it to the skill when you ask for trains. The skill uses it to look up a public timetable.</p>
-      <p>The page does not ask for your name, email, or payment details, and it does not use cookies or analytics.</p>
-      <p>Timetable data is published by PKP Polskie Linie Kolejowe S.A. and assembled as GTFS by Mikołaj Kuranowski (<a href="https://mkuran.pl/gtfs/">mkuran.pl/gtfs</a>). Live delay data comes from that same feed.</p>
-      <p><a href="index.html">Back to the station list</a></p>
-    </div>
+    <p>This page is the station picker for a personal Alexa skill. It does not create an account, and it has no server of its own.</p>
+    <p>When you tap Done, the page hands Alexa an access token. That token contains only the station codes you selected. Alexa stores it on your Amazon account and sends it to the skill when you ask for trains. The skill uses it to look up a public timetable.</p>
+    <p>The page does not ask for your name, email, or payment details, and it does not use cookies or analytics.</p>
+    <p>Timetable data is published by PKP Polskie Linie Kolejowe S.A. and assembled as GTFS by <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>. Live delay data comes from that same feed.</p>
+    <p><a href="index.html">Back to stations</a></p>
   </main>
 </body>
 </html>
