@@ -6,7 +6,7 @@
 
 An Alexa skill that tells you the next trains leaving your Polish railway stations.
 
-<img src="docs/picker.png" alt="Station picker with Warszawa Centralna and Kraków Główny selected" width="320">
+<img src="docs/picker.png" alt="Station picker with Warszawa Centralna and Kraków Główny selected" width="240">
 
 ## Try it
 
