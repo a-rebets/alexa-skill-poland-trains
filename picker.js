@@ -33,8 +33,8 @@
   };
   var REDIRECT_PATH = "/spa/skill/account-linking-status.html";
   var FOLDS = {
-    "\u0105": "a", "\u0107": "c", "\u0119": "e", "\u0142": "l", "\u0144": "n",
-    "\u00f3": "o", "\u015b": "s", "\u017a": "z", "\u017c": "z",
+    "ą": "a", "ć": "c", "ę": "e", "ł": "l", "ń": "n",
+    "ó": "o", "ś": "s", "ź": "z", "ż": "z",
   };
   var ALIASES = { warsaw: "warszawa", cracow: "krakow" };
 
@@ -234,7 +234,7 @@
       if (!query.trim()) {
         var hint = document.createElement("li");
         hint.className = "empty";
-        hint.textContent = "Type a station. Diacritics are optional, so lodz finds \u0141\u00f3d\u017a.";
+        hint.textContent = "Type a station. Diacritics are optional, so lodz finds Łódź.";
         results.appendChild(hint);
         return;
       }
@@ -254,7 +254,7 @@
         var name = document.createElement("span");
         name.textContent = station.name;
         var code = document.createElement("small");
-        code.textContent = station.id + (already ? " \u00b7 selected" : "");
+        code.textContent = station.id + (already ? " · selected" : "");
         button.appendChild(name);
         button.appendChild(code);
         button.disabled = already;
