@@ -15,6 +15,8 @@ The Alexa skill itself is not in this repository. That code stays in a private r
 
 ## Publishing
 
+`stations.js` and `stations.json` still need to be copied onto this root from the private skill repo's `picker/` directory. The page, stylesheet, script, and privacy policy are already here. Without the station list, search has nothing to show.
+
 In Settings → Pages, set Source to **Deploy from a branch**, branch `main`, folder `/ (root)`.
 
-`.nojekyll` is present so GitHub Pages does not run Jekyll. A GitHub Actions workflow is not in this repo: creating `.github/workflows/` was rejected.
+`.nojekyll` is present so GitHub Pages does not run Jekyll. A GitHub Actions workflow is not in this repo.
