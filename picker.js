@@ -131,9 +131,8 @@
     if (url.username || url.password || url.port || url.hash) return false;
     if (!REDIRECT_HOSTS[url.hostname]) return false;
     if (url.pathname !== REDIRECT_PATH) return false;
-    var keys = [];
-    url.searchParams.forEach(function (_value, key) { keys.push(key); });
-    if (keys.length !== 1 || keys[0] !== "vendorId") return false;
+    // Alexa documents vendorId, and may add other query parameters. The host
+    // and path stay pinned, so an extra parameter cannot move the token.
     var vendor = url.searchParams.get("vendorId") || "";
     return /^[A-Za-z0-9._-]{1,80}$/.test(vendor);
   }
