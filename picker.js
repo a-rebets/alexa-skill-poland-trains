@@ -181,6 +181,135 @@
     return { mode: "link", redirect: result.redirect, state: result.state };
   }
 
+  var FEATURED = [
+    "warszawa centralna",
+    "krakow glowny",
+    "gdansk glowny",
+    "wroclaw glowny",
+    "poznan glowny",
+    "lodz fabryczna",
+  ];
+  var CHECK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7.5 12.2l3 3.1 6-6.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var LIMIT_TEXT = "Five stations is the most this skill will read. Remove one to choose another.";
+
+  function foldChar(ch) {
+    var lower = ch.toLowerCase();
+    var mapped = FOLDS[lower] || lower;
+    return mapped.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function namePieces(name) {
+    var pieces = [];
+    var buf = "";
+    var start = 0;
+    function flush(end) {
+      if (buf) pieces.push({ start: start, end: end, text: buf });
+      buf = "";
+    }
+    for (var i = 0; i < name.length; i++) {
+      var folded = foldChar(name.charAt(i));
+      if (folded.length === 1 && /[a-z0-9]/.test(folded)) {
+        if (!buf) start = i;
+        buf += folded;
+      } else {
+        flush(i);
+      }
+    }
+    flush(name.length);
+    return pieces;
+  }
+
+  function rangesFor(pieces, from, to) {
+    var ranges = [];
+    var offset = 0;
+    for (var i = 0; i < pieces.length; i++) {
+      var piece = pieces[i];
+      var pieceEnd = offset + piece.text.length;
+      var overlapStart = Math.max(from, offset);
+      var overlapEnd = Math.min(to, pieceEnd);
+      if (overlapStart < overlapEnd) {
+        var local = overlapStart - offset;
+        ranges.push({
+          start: piece.start + local,
+          end: piece.start + (overlapEnd - offset),
+        });
+      }
+      offset = pieceEnd + 1;
+    }
+    return ranges;
+  }
+
+  function mergeRanges(ranges) {
+    var sorted = ranges.slice().sort(function (a, b) {
+      return a.start - b.start || a.end - b.end;
+    });
+    var out = [];
+    sorted.forEach(function (range) {
+      var last = out[out.length - 1];
+      if (last && range.start <= last.end) last.end = Math.max(last.end, range.end);
+      else out.push({ start: range.start, end: range.end });
+    });
+    return out;
+  }
+
+  function matchRanges(name, query) {
+    var folded = aliasQuery(normalizeName(query));
+    if (!folded) return [];
+    var pieces = namePieces(name);
+    var norm = pieces.map(function (piece) { return piece.text; }).join(" ");
+    var index = norm.indexOf(folded);
+    if (index >= 0) return rangesFor(pieces, index, index + folded.length);
+    var tokens = folded.split(" ");
+    var ranges = [];
+    var used = {};
+    tokens.forEach(function (token) {
+      var offset = 0;
+      for (var i = 0; i < pieces.length; i++) {
+        var part = pieces[i].text;
+        var take = 0;
+        if (!used[i] && part.indexOf(token) === 0) take = token.length;
+        else if (!used[i] && tokens.length === 1 && token.length >= 4 && levenshtein(part, token) <= 1) take = part.length;
+        if (take) {
+          ranges = ranges.concat(rangesFor(pieces, offset, offset + take));
+          used[i] = true;
+          break;
+        }
+        offset += part.length + 1;
+      }
+    });
+    return mergeRanges(ranges);
+  }
+
+  function fillHighlighted(el, name, query) {
+    var ranges = mergeRanges(matchRanges(name, query));
+    if (!ranges.length) {
+      el.textContent = name;
+      return;
+    }
+    var cursor = 0;
+    ranges.forEach(function (range) {
+      if (range.start > cursor) el.appendChild(document.createTextNode(name.slice(cursor, range.start)));
+      var mark = document.createElement("mark");
+      mark.textContent = name.slice(range.start, range.end);
+      el.appendChild(mark);
+      cursor = range.end;
+    });
+    if (cursor < name.length) el.appendChild(document.createTextNode(name.slice(cursor)));
+  }
+
+  function featuredStations(stations) {
+    var byNorm = {};
+    for (var i = 0; i < stations.length; i++) {
+      var norm = stations[i].norm || normalizeName(stations[i].name);
+      if (!byNorm[norm]) byNorm[norm] = stations[i];
+    }
+    var found = [];
+    FEATURED.forEach(function (name) {
+      if (byNorm[name]) found.push(byNorm[name]);
+    });
+    return found;
+  }
+
   function start(stations, search) {
     var params = new URLSearchParams(search || "");
     var mode = classify(params, search);
@@ -189,72 +318,87 @@
     var input = document.getElementById("q");
     var results = document.getElementById("results");
     var chosen = document.getElementById("selected");
-    var count = document.getElementById("count");
     var done = document.getElementById("done");
     var tokenBox = document.getElementById("token");
-    if (!input || !stations) return;
+    var limit = document.getElementById("limit");
+    var live = document.getElementById("live");
+    var choice = document.getElementById("choice");
+    var form = document.getElementById("finder");
+    if (!input || !results || !chosen || !done || !stations) return;
 
     function say(text, kind) {
+      if (!banner) return;
       banner.hidden = false;
-      banner.className = "banner " + (kind || "");
+      banner.className = "banner" + (kind ? " " + kind : "");
       banner.textContent = text;
+      banner.setAttribute("role", kind === "bad" ? "alert" : "status");
     }
 
     if (!stations.length) {
-      say("The station list did not load. Rebuild it with scripts/build_data.py.", "bad");
+      say("The station list didn't load. Refresh the page.", "bad");
     } else if (mode.mode === "error") {
       say(errorText(mode.errors), "bad");
     } else if (mode.mode === "preview") {
-      say("Preview: Alexa did not open this page, so Done shows a token instead of redirecting. Paste it into scripts/preview.py --token.", "note");
-    } else {
-      say("Choose up to " + MAX_STATIONS + " stations, then tap Done to return to Alexa.", "ok");
+      say("Opened outside Alexa, so Done stays on this page.", "note");
+    }
+
+    function isSelected(station) {
+      return selected.some(function (item) { return item.id === station.id; });
     }
 
     function render() {
-      count.textContent = selected.length + " of " + MAX_STATIONS;
-      done.disabled = selected.length === 0 || mode.mode === "error";
+      var n = selected.length;
+      done.disabled = n === 0 || mode.mode === "error";
+      done.textContent = n === 0 ? "Done" : "Done · " + n + " station" + (n === 1 ? "" : "s");
+      if (limit) {
+        limit.hidden = n < MAX_STATIONS;
+        limit.textContent = n >= MAX_STATIONS ? LIMIT_TEXT : "";
+      }
+      if (choice) {
+        choice.textContent = n === 0
+          ? "No stations selected."
+          : n + " station" + (n === 1 ? "" : "s") + " selected." + (n >= MAX_STATIONS ? " " + LIMIT_TEXT : "");
+      }
       chosen.innerHTML = "";
-      selected.forEach(function (station, index) {
+      selected.forEach(function (station) {
         var item = document.createElement("li");
+        item.className = "chip";
         var label = document.createElement("span");
         label.textContent = station.name;
-        var code = document.createElement("small");
-        code.textContent = station.id;
         var remove = document.createElement("button");
         remove.type = "button";
-        remove.textContent = "Remove";
+        remove.setAttribute("aria-label", "Remove " + station.name);
+        remove.textContent = "×";
         remove.addEventListener("click", function () {
-          selected.splice(index, 1);
+          selected = selected.filter(function (item) { return item.id !== station.id; });
           render();
           showMatches(input.value);
         });
         item.appendChild(label);
-        item.appendChild(code);
         item.appendChild(remove);
         chosen.appendChild(item);
       });
-      if (!selected.length) {
-        var empty = document.createElement("li");
-        empty.className = "empty";
-        empty.textContent = "None yet.";
-        chosen.appendChild(empty);
-      }
     }
 
     function showMatches(query) {
       results.innerHTML = "";
-      var matches = searchStations(stations, query, 30);
-      if (!query.trim()) {
-        var hint = document.createElement("li");
-        hint.className = "empty";
-        hint.textContent = "Type a station. Diacritics are optional, so lodz finds Łódź.";
-        results.appendChild(hint);
-        return;
+      var typed = query.trim();
+      var matches = typed ? orderedMatches(query) : featuredStations(stations);
+      results.setAttribute("aria-label", typed ? "Search results" : "Major stations");
+      if (live) {
+        live.textContent = matches.length
+          ? (typed ? matches.length + (matches.length === 1 ? " station." : " stations.") : matches.length + " major stations.")
+          : "No stations match.";
       }
       if (!matches.length) {
         var none = document.createElement("li");
         none.className = "empty";
-        none.textContent = "No station matches that.";
+        var title = document.createElement("p");
+        title.textContent = typed ? "No station matches that." : "Type a station name.";
+        var hint = document.createElement("p");
+        hint.textContent = "Diacritics are optional, so lodz finds Łódź.";
+        none.appendChild(title);
+        none.appendChild(hint);
         results.appendChild(none);
         return;
       }
@@ -262,22 +406,26 @@
         var item = document.createElement("li");
         var button = document.createElement("button");
         button.type = "button";
-        var already = selected.some(function (item) { return item.id === station.id; });
-        button.innerHTML = "";
+        var already = isSelected(station);
+        button.setAttribute("aria-pressed", already ? "true" : "false");
         var name = document.createElement("span");
-        name.textContent = station.name;
-        var code = document.createElement("small");
-        code.textContent = station.id + (already ? " · selected" : "");
+        name.className = "name";
+        fillHighlighted(name, station.name, typed ? query : "");
+        var check = document.createElement("span");
+        check.className = "check";
+        check.setAttribute("aria-hidden", "true");
+        check.innerHTML = CHECK_SVG;
         button.appendChild(name);
-        button.appendChild(code);
-        button.disabled = already;
+        button.appendChild(check);
         button.addEventListener("click", function () {
-          if (selected.some(function (item) { return item.id === station.id; })) return;
-          if (selected.length >= MAX_STATIONS) {
-            say("Five stations is the limit, so the announcement stays short.", "note");
+          if (isSelected(station)) {
+            selected = selected.filter(function (item) { return item.id !== station.id; });
+          } else if (selected.length >= MAX_STATIONS) {
+            if (limit && !limit.hidden) limit.scrollIntoView({ block: "nearest" });
             return;
+          } else {
+            selected.push(station);
           }
-          selected.push(station);
           render();
           showMatches(input.value);
         });
@@ -286,33 +434,53 @@
       });
     }
 
-    input.addEventListener("input", function () { showMatches(input.value); });
+    function orderedMatches(query) {
+      var pinned = searchStations(featuredStations(stations), query, FEATURED.length);
+      var rest = searchStations(stations, query, 30);
+      var seen = {};
+      var out = [];
+      pinned.forEach(function (station) {
+        seen[station.id] = true;
+        out.push(station);
+      });
+      rest.forEach(function (station) {
+        if (!seen[station.id] && out.length < 30) out.push(station);
+      });
+      return out;
+    }
+
+    function onType() { showMatches(input.value); }
+    input.addEventListener("input", onType);
+    input.addEventListener("search", onType);
+    if (form) form.addEventListener("submit", function (event) { event.preventDefault(); });
     done.addEventListener("click", function () {
+      if (done.disabled) return;
       var ids = selected.map(function (station) { return station.id; });
       var token = encodeToken(ids);
       if (mode.mode !== "link") {
-        tokenBox.hidden = false;
-        tokenBox.textContent = token;
+        if (tokenBox) {
+          tokenBox.hidden = false;
+          tokenBox.textContent = token;
+        }
         return;
       }
       window.location.replace(buildRedirect(mode.redirect, mode.state, token));
     });
     render();
     showMatches("");
-    input.focus();
   }
 
   function errorText(errors) {
     if (errors.indexOf("redirect_uri") >= 0) {
-      return "Alexa sent a redirect address this page does not recognize, so nothing was saved.";
+      return "This link from Alexa isn't one this page can use. Open the skill in the Alexa app and try again.";
     }
     if (errors.indexOf("client_id") >= 0) {
-      return "The client id must be upcoming-trains. Check the account-linking settings in the Alexa console.";
+      return "Alexa opened this page for a different skill, so it can't continue.";
     }
     if (errors.indexOf("state") >= 0) {
-      return "Alexa did not send a usable state value, so this page will not redirect.";
+      return "Alexa didn't finish opening this page, so your choice can't be sent back. Close it and link the account again.";
     }
-    return "Alexa did not ask for an implicit-grant token (response_type=token).";
+    return "Alexa asked for a different kind of sign-in. This page only works when account linking is set to Implicit Grant.";
   }
 
   return {
