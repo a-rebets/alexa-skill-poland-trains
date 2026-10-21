@@ -138,15 +138,29 @@
     return /^[A-Za-z0-9._-]{1,80}$/.test(vendor);
   }
 
-  function validateLaunchQuery(params) {
+  function rawParam(search, name) {
+    var parts = String(search || "").replace(/^\?/, "").split("&");
+    for (var i = 0; i < parts.length; i++) {
+      var eq = parts[i].indexOf("=");
+      var key = eq < 0 ? parts[i] : parts[i].slice(0, eq);
+      if (key === name) {
+        var val = eq < 0 ? "" : parts[i].slice(eq + 1);
+        try { return decodeURIComponent(val); } catch (err) { return val; }
+      }
+    }
+    return "";
+  }
+
+  function validateLaunchQuery(params, search) {
     var redirect = params.get("redirect_uri") || "";
-    var state = params.get("state") || "";
+    // Amazon's state is long and may contain "+", which URLSearchParams turns into a space.
+    var state = search ? rawParam(search, "state") : (params.get("state") || "");
     var client = params.get("client_id") || "";
     var responseType = params.get("response_type") || "";
     var errors = [];
     if (responseType !== "token") errors.push("response_type");
     if (client !== CLIENT_ID) errors.push("client_id");
-    if (!state || state.length > 512 || /[#&\s<>"']/.test(state)) errors.push("state");
+    if (!state || state.length > 8192 || /[\s<>"]/.test(state)) errors.push("state");
     if (!isAllowedRedirect(redirect)) errors.push("redirect_uri");
     return { ok: errors.length === 0, errors: errors, redirect: redirect, state: state };
   }
@@ -160,17 +174,17 @@
     return url.origin + url.pathname + url.search + "#" + hash.toString();
   }
 
-  function classify(params) {
+  function classify(params, search) {
     var touched = params.has("redirect_uri") || params.has("client_id") || params.has("state") || params.has("response_type");
     if (!touched) return { mode: "preview" };
-    var result = validateLaunchQuery(params);
+    var result = validateLaunchQuery(params, search);
     if (!result.ok) return { mode: "error", errors: result.errors };
     return { mode: "link", redirect: result.redirect, state: result.state };
   }
 
   function start(stations, search) {
     var params = new URLSearchParams(search || "");
-    var mode = classify(params);
+    var mode = classify(params, search);
     var selected = [];
     var banner = document.getElementById("banner");
     var input = document.getElementById("q");
