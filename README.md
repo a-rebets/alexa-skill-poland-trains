@@ -15,6 +15,6 @@ The Alexa skill itself is not in this repository. That code stays in a private r
 
 ## Publishing
 
-GitHub Actions deploys this branch to GitHub Pages (`.github/workflows/pages.yml`). In the repository settings, set Pages → Source to **GitHub Actions**.
+In Settings → Pages, set Source to **Deploy from a branch**, branch `main`, folder `/ (root)`.
 
-If you would rather deploy the branch directly, set Source to **Deploy from a branch**, branch `main`, folder `/ (root)`. `.nojekyll` is there so GitHub Pages does not run Jekyll.
+`.nojekyll` is present so GitHub Pages does not run Jekyll. A GitHub Actions workflow is not in this repo: creating `.github/workflows/` was rejected.
