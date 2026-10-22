@@ -1,4 +1,5 @@
-/* Station picker for the Upcoming Trains Alexa skill.
+/* Station picker for the My Train Schedule Alexa skill.
+ * The timetable currently covers only Poland. Other countries may be added later.
  *
  * Alexa opens this page as an OAuth 2.0 implicit-grant authorization URL.
  * There is no token endpoint. After the user taps Done, the page redirects
@@ -112,7 +113,7 @@
   }
 
   var TRAIN_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M8 12.5Q8 8 12 8h8q4 0 4 4.5V20q0 2.2-2.2 2.2H10.2Q8 22.2 8 20v-7.5z"/><rect x="11.2" y="11.2" width="9.6" height="4.4" rx="1" fill="currentColor"/><circle cx="13" cy="24.2" r="1.5" fill="currentColor"/><circle cx="19" cy="24.2" r="1.5" fill="currentColor"/></svg>';
-  var CACHE = "7";
+  var CACHE = "8";
   var KEY_RE = /^[A-Za-z0-9_-]{8,128}$/;
 
   function b64url(json) {
