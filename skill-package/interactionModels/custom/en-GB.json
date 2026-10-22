@@ -1,0 +1,119 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "my train schedule",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
+          "name": "DeparturesIntent",
+          "slots": [
+            {
+              "name": "time",
+              "type": "AMAZON.TIME"
+            },
+            {
+              "name": "date",
+              "type": "AMAZON.DATE"
+            }
+          ],
+          "samples": [
+            "departures",
+            "the departures",
+            "what's leaving",
+            "what is leaving",
+            "what's departing",
+            "what is departing",
+            "trains leaving",
+            "trains departing",
+            "departing trains",
+            "the next trains",
+            "the next departures",
+            "upcoming trains",
+            "check departures",
+            "check the departures",
+            "trains in the next hour",
+            "what trains are leaving",
+            "which trains are leaving",
+            "what trains are departing",
+            "next departures",
+            "show departures",
+            "list departures",
+            "departing trains at {time}",
+            "departures at {time}",
+            "trains leaving at {time}",
+            "departures {date} at {time}",
+            "trains at {time}"
+          ]
+        },
+        {
+          "name": "ArrivalsIntent",
+          "slots": [
+            {
+              "name": "time",
+              "type": "AMAZON.TIME"
+            },
+            {
+              "name": "date",
+              "type": "AMAZON.DATE"
+            }
+          ],
+          "samples": [
+            "arrivals",
+            "the arrivals",
+            "what's arriving",
+            "what is arriving",
+            "trains arriving",
+            "arriving trains",
+            "trains coming in",
+            "what's coming in",
+            "what is coming in",
+            "which trains are arriving",
+            "what trains are arriving",
+            "the next arrivals",
+            "incoming trains",
+            "trains coming",
+            "check arrivals",
+            "check the arrivals",
+            "show arrivals",
+            "list arrivals",
+            "what's coming",
+            "arriving trains at {time}",
+            "arrivals at {time}",
+            "arrivals {date} at {time}"
+          ]
+        },
+        {
+          "name": "ChangeStationsIntent",
+          "slots": [],
+          "samples": [
+            "change my stations",
+            "change stations",
+            "pick different stations",
+            "update my stations",
+            "choose stations again"
+          ]
+        }
+      ],
+      "types": []
+    }
+  }
+}

@@ -1,11 +1,13 @@
 name: Refresh timetable
 
-# Every Monday about 07:00 Warsaw time (05:00 UTC), on a push to main, or by hand.
+# Every Monday about 07:00 Warsaw time (05:00 UTC), on a push to main, on a pull request
+# (build only: no Pages deploy and no hosted push), or by hand.
 on:
   schedule:
     - cron: "0 5 * * 1"
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
       skip_hosted:
@@ -52,12 +54,14 @@ jobs:
       - name: Assemble the Pages site
         run: |
           mkdir -p _site
-          cp index.html privacy.html picker.css picker.js _site/
+          # Picker source lives in picker/. Pages still serves these files at the site root,
+          # which is the account-linking authorizationUrl.
+          cp picker/index.html picker/privacy.html picker/picker.css picker/picker.js _site/
           cp -r icons docs _site/
           cp build/picker/stations.js build/picker/stations.json build/picker/directions.json _site/
           # Cache-busting: keep the hand-set version and append a digest of this week's data,
           # so browsers fetch new station and direction files after every refresh.
-          base=$(sed -n 's/.*var CACHE = "\([^"]*\)".*/\1/p' picker.js)
+          base=$(sed -n 's/.*var CACHE = "\([^"]*\)".*/\1/p' picker/picker.js)
           test -n "$base"
           digest=$(cat build/picker/stations.js build/picker/directions.json | sha256sum | cut -c1-8)
           v="$base.$digest"
@@ -80,6 +84,8 @@ jobs:
 
   pages:
     needs: build
+    # A pull request must not publish over the live account-linking page.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -105,8 +111,10 @@ jobs:
 
   hosted:
     # Pushes the new timetable to the Alexa-hosted skill, then asks the skill for departures.
+    # Not on a pull request, and not on an ordinary push to main: only the weekly run
+    # and a manual dispatch (unless skip_hosted) may write to the hosted repository.
     needs: build
-    if: github.event_name != 'push' && !inputs.skip_hosted
+    if: github.event_name != 'pull_request' && github.event_name != 'push' && !inputs.skip_hosted
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

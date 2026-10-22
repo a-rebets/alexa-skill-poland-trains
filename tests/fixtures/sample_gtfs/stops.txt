@@ -1,0 +1,8 @@
+stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station
+33506,Warszawa Zachodnia,52.2196,20.9650,1,
+34868,Warszawa Zachodnia (Peron 9),52.2196,20.9650,1,
+33514,Warszawa Włochy,52.2060,20.9130,1,
+33548,Warszawa Ursus Północny,52.2010,20.8840,1,
+33605,Warszawa Centralna,52.2288,21.0034,1,
+46458,Łódź Fabryczna,51.7686,19.4670,1,
+80416,Kraków Główny,50.0677,19.9474,1,

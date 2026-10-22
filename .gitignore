@@ -3,7 +3,11 @@ stations.js
 stations.json
 directions.json
 lambda/data/
+lambda/secrets/
 build/
 _site/
 __pycache__/
 *.pyc
+.pytest_cache/
+.ask/
+.venv/
