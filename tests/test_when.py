@@ -444,6 +444,9 @@ def test_models_manifest_and_picker_use_the_new_name():
     assert 'aria-label="My Train Schedule"' in privacy
     assert "?v=8" in page and "?v=7" not in page
     assert "?v=8" in privacy
+    terms = (ROOT / "picker/terms.html").read_text(encoding="utf-8")
+    assert 'aria-label="My Train Schedule"' in terms and "?v=8" in terms
+    assert 'href="terms.html"' in page and 'href="terms.html"' in privacy
     assert 'CACHE = "8"' in script
     assert SKILL_NAME == "My Train Schedule"
     assert "My Train Schedule" in change_message()

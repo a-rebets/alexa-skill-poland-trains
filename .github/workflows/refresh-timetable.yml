@@ -56,7 +56,7 @@ jobs:
           mkdir -p _site
           # Picker source lives in picker/. Pages still serves these files at the site root,
           # which is the account-linking authorizationUrl.
-          cp picker/index.html picker/privacy.html picker/picker.css picker/picker.js _site/
+          cp picker/index.html picker/privacy.html picker/terms.html picker/picker.css picker/picker.js _site/
           cp -r icons docs _site/
           cp build/picker/stations.js build/picker/stations.json build/picker/directions.json _site/
           # Cache-busting: keep the hand-set version and append a digest of this week's data,

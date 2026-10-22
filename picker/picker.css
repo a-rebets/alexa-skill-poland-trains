@@ -272,6 +272,8 @@ a { color: inherit; text-underline-offset: 2px; }
 
 .prose h1 { margin-bottom: 4px; }
 
+.prose h2 { margin: 28px 0 0; font-size: 17px; }
+
 .dock {
   position: fixed;
   z-index: 5;

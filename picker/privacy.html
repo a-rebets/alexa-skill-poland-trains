@@ -21,12 +21,27 @@
       </svg>
       <p class="brand">My Train Schedule</p>
     </header>
-    <h1>Privacy</h1>
-    <p>This page is the station picker for a personal Alexa skill. The timetable currently supports only Poland, and other countries may be added later. It does not create an account, and it has no server of its own.</p>
-    <p>When you tap Done, the page hands Alexa an access token. That token contains the station codes you selected. If you turn a direction off, it also contains the direction codes you left on, including whether long-distance trains stay included. If you paste an ElevenLabs API key, that optional key is part of the same token. Alexa stores the token on your Amazon account and sends it to the skill when you ask for trains. The skill uses the station codes to look up a public timetable. It sends the key only to ElevenLabs, to read the answer, and does not store the key. Leave the key empty and the skill uses the standard Alexa voice. An older token with only station codes still means every direction and the Alexa voice.</p>
-    <p>The page does not ask for your name or email, and it does not use cookies or analytics. The key is typed into the page and is not saved in this browser. It leaves only inside the account-linking token.</p>
-    <p>Timetable data is published by PKP Polskie Linie Kolejowe S.A. and assembled as GTFS by <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>. Live delay data comes from that same feed.</p>
-    <p><a href="index.html">Back to stations</a></p>
+    <h1>Privacy policy</h1>
+    <p>Last updated: 22 October 2026.</p>
+    <p>My Train Schedule is a free Alexa skill that reads train departures and arrivals for stations you choose. The timetable currently covers only Poland. It is an open-source personal project by Artem Rebets; the code is at <a href="https://github.com/a-rebets/alexa-skill-poland-trains">github.com/a-rebets/alexa-skill-poland-trains</a>. This policy covers the skill and this station picker.</p>
+    <h2>What the skill does not collect</h2>
+    <p>The skill does not ask for your name, email address, phone number, location, or contacts. It has no user accounts and no database of users. This page does not use cookies, analytics, or tracking, and it loads nothing from other sites.</p>
+    <h2>The account-linking token</h2>
+    <p>When you link the skill, this page hands Alexa an access token. The token contains the station codes you selected and, if you turned some off, the direction codes you kept, including whether long-distance trains are included. If you paste an ElevenLabs API key, that optional key is part of the same token. Station and direction codes are public timetable identifiers.</p>
+    <p>Alexa stores the token on your Amazon account and sends it to the skill with each request. The skill reads it to know which stations to look up and does not save it anywhere. The key is typed into this page, is not saved in your browser, and leaves only inside the token. To remove the token, disable the skill or unlink it in the Alexa app. To change stations, link it again.</p>
+    <h2>Requests to the skill</h2>
+    <p>The skill runs as an Alexa-hosted skill on Amazon Web Services. Amazon sends it each request, including an anonymous Alexa user ID and the token. The skill uses the user ID only within that request and does not store it.</p>
+    <p>The skill writes a short technical log line for each request to Amazon CloudWatch: timings, whether live data and the natural voice were used, and the length of the spoken text. It does not log the token, the key, your stations, or your user ID. Error reports, if any, contain the program error and stack trace. Amazon's own platform also records the request ID and duration. Those logs stay in the Alexa-hosted account under Amazon's settings.</p>
+    <h2>Natural voice (ElevenLabs)</h2>
+    <p>Only if you supplied an ElevenLabs key, the skill sends the text of the answer (train times, station and destination names) to ElevenLabs with your key, to turn it into speech. Nothing else about you is sent. ElevenLabs bills that use to your ElevenLabs account and handles the request under its own <a href="https://elevenlabs.io/privacy-policy">privacy policy</a>. Without a key, the standard Alexa voice is used and ElevenLabs is not contacted.</p>
+    <p>The resulting audio is stored in the skill's Amazon S3 bucket under the current day (Europe/Warsaw), so the same answer can be replayed without calling ElevenLabs again. A clip contains only the spoken timetable text. It is named by a hash of the voice, model, and text, not by user, so it is not linked to you or your key. Clips from previous days are deleted automatically.</p>
+    <h2>Timetable data</h2>
+    <p>Timetable data is published by PKP Polskie Linie Kolejowe S.A. and assembled as GTFS by <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>. Live delay data comes from that same feed. The skill downloads these public files; it sends nothing about you to them.</p>
+    <h2>Children</h2>
+    <p>The skill is not directed at children and does not knowingly collect information from them.</p>
+    <h2>Changes and contact</h2>
+    <p>Changes to this policy are published on this page and in the repository history. For questions, open an issue at <a href="https://github.com/a-rebets/alexa-skill-poland-trains/issues">github.com/a-rebets/alexa-skill-poland-trains/issues</a>.</p>
+    <p><a href="terms.html">Terms of use</a> · <a href="index.html">Back to stations</a></p>
   </main>
 </body>
 </html>
