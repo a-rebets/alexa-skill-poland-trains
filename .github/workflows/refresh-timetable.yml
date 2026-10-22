@@ -185,26 +185,54 @@ jobs:
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Wait for the hosted deploy
-        if: steps.push.outputs.pushed == 'true'
-        env:
-          COMMIT: ${{ steps.push.outputs.commit }}
+        # Also runs when nothing was pushed, to make sure the last commit is the one deployed.
+        # An Alexa-hosted deploy fails now and then for no visible reason; an empty commit
+        # retries it, up to twice.
         run: |
-          for i in $(seq 1 60); do
-            status=$(ask smapi get-skill-status -s "$SKILL_ID" \
-              | jq -r '.hostedSkillDeployment.lastUpdateRequest | "\(.status) \(.deploymentDetails.commitId // "")"')
-            echo "$(date -u +%H:%M:%S) $status"
-            set -- $status
-            if [ "$2" = "$COMMIT" ]; then
-              case "$1" in
-                SUCCEEDED) exit 0 ;;
-                FAILED) echo "The hosted deploy failed."; exit 1 ;;
-              esac
+          cd hosted
+          deploy_state() {
+            ask smapi get-skill-status -s "$SKILL_ID" \
+              | jq -r '.hostedSkillDeployment.lastUpdateRequest | "\(.status) \(.deploymentDetails.commitId // "")"'
+          }
+          redeploy() {
+            git -c user.name=Artem -c user.email=artem.rebets@gmail.com \
+              commit --quiet --allow-empty -m "Redeploy timetable refresh (retry $1)"
+            git push origin HEAD:master
+          }
+          attempt=1
+          set -- $(deploy_state)
+          if [ "$2" = "$(git rev-parse HEAD)" ] && [ "$1" = "SUCCEEDED" ]; then
+            echo "Hosted master $2 is deployed."
+            exit 0
+          fi
+          if [ "${{ steps.push.outputs.pushed }}" != "true" ]; then
+            echo "Hosted master is not the deployed commit ($*); redeploying."
+            attempt=2
+            redeploy 1
+          fi
+          while :; do
+            commit=$(git rev-parse HEAD)
+            result=timeout
+            for i in $(seq 1 60); do
+              set -- $(deploy_state)
+              echo "$(date -u +%H:%M:%S) $*"
+              if [ "$2" = "$commit" ] && [ "$1" != "IN_PROGRESS" ]; then result=$1; break; fi
+              sleep 15
+            done
+            case "$result" in
+              SUCCEEDED) echo "Deployed $commit."; exit 0 ;;
+              timeout)
+                echo "::error::The push did not trigger a hosted deploy within 15 minutes. Open the Alexa developer console, Code tab, and click Deploy."
+                exit 1 ;;
+            esac
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::The hosted deploy failed $attempt times. Check the Code tab in the Alexa developer console."
+              exit 1
             fi
-            sleep 15
+            echo "Deploy of $commit ended $result; retrying with an empty commit."
+            redeploy "$attempt"
+            attempt=$((attempt + 1))
           done
-          echo "The push did not trigger a hosted deploy within 15 minutes."
-          echo "Open the Alexa developer console, Code tab, and click Deploy."
-          exit 1
 
       - name: Smoke test the live skill
         run: |
