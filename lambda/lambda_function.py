@@ -29,8 +29,8 @@ from upcoming_trains.speech import (
 from upcoming_trains.timeutil import warsaw_date
 from upcoming_trains.timing import begin as begin_timing
 from upcoming_trains.timing import emit as emit_timing
-from upcoming_trains.token import TokenError, read_token, usable_key
-from upcoming_trains.voice import narrate, note_handler_start, warm_client
+from upcoming_trains.token import TokenError, read_token
+from upcoming_trains.voice import narrate, note_handler_start
 from upcoming_trains.when import WhenError, resolve_when
 
 UTC = timezone.utc
@@ -60,10 +60,12 @@ def _preload_schedule():
 
 
 def _warm_lambda() -> None:
-    """On a hosted invoke, start the feed and boto3 during the cold import.
+    """On a hosted invoke, start the live feed during the cold import.
 
     Local tests leave AWS_LAMBDA_FUNCTION_NAME unset, so they do not open
-    the feed or import boto3 just by importing this module.
+    the feed just by importing this module. boto3 is not imported here.
+    Its import holds the GIL, and doing it beside the first walk of a
+    cached realtime body made that walk report a long realtime_ms.
     """
     if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
         return
@@ -71,7 +73,6 @@ def _warm_lambda() -> None:
         from upcoming_trains.realtime import prefetch
 
         prefetch()
-        warm_client()
     except Exception:
         traceback.print_exc()
 
@@ -132,9 +133,6 @@ def upcoming(event: dict, kind: str = "departure") -> dict:
         linked = read_token(token)
     except TokenError:
         return _response(plain_ssml(link_message()), card=True)
-
-    if usable_key(linked.api_key):
-        warm_client()
 
     now = datetime.now(UTC)
     intent = (event.get("request") or {}).get("intent") or {}

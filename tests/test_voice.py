@@ -325,6 +325,14 @@ def test_deadline_skips_elevenlabs_when_the_handler_budget_is_spent(s3, monkeypa
         voice._handler_started = None
 
 
+def test_handler_budget_leaves_half_a_second_under_alexa():
+    # Alexa stops at about 8 s from the invoke. import_ms on the cold start
+    # that timed out was 98 ms, outside this budget. 7.5 s leaves 0.5 s for
+    # runtime startup, that import, and the response.
+    assert HANDLER_BUDGET_SECONDS == 7.5
+    assert 8.0 - HANDLER_BUDGET_SECONDS == pytest.approx(0.5)
+
+
 def _full_timeout() -> float:
     return (
         HANDLER_BUDGET_SECONDS
@@ -393,6 +401,72 @@ def test_s3_put_failure_falls_back_after_a_successful_generation(s3, monkeypatch
     assert KEY not in spoken
     assert _object_key() not in s3.objects
     assert _usage_keys(s3) == []
+
+
+def test_s3_and_the_directive_do_not_run_in_front_of_elevenlabs(s3, monkeypatch):
+    """A cold client and a slow 'Checking' line must not shrink the TTS budget.
+
+    Production gave a 232-character answer about 3.5 s and ElevenLabs needed
+    about 4 s. The HEAD's own time and the 1 s directive timeout were not
+    supposed to sit in front of that POST.
+    """
+    s3.head_delay = 0.3
+    calls = []
+    began = time.perf_counter()
+
+    def slow_client():
+        time.sleep(0.4)
+        return s3
+
+    def urlopen(request, timeout=None):
+        calls.append(
+            {"url": request.full_url, "at": time.perf_counter(), "timeout": timeout}
+        )
+        if request.full_url.endswith("/v1/directives"):
+            time.sleep(0.8)
+            return FakeResponse(b"")
+        return FakeResponse(b"ID3fresh")
+
+    monkeypatch.setattr(voice, "s3_client", slow_client)
+    monkeypatch.setattr(voice.urllib.request, "urlopen", urlopen)
+    voice.note_handler_start()
+    try:
+        spoken = voice.narrate(TEXT, USER, FALLBACK, NOW, KEY, PROGRESS)
+    finally:
+        voice._handler_started = None
+    elapsed = time.perf_counter() - began
+    _assert_one_audio(spoken)
+    synthesis = [call for call in calls if "text-to-speech" in call["url"]]
+    assert synthesis
+    assert synthesis[0]["at"] - began < 0.25
+    assert synthesis[0]["timeout"] == pytest.approx(_full_timeout(), abs=0.2)
+    # Client build 0.4 s + HEAD 0.3 s. The directive's 0.8 s is beside that.
+    assert elapsed < 1.05
+    deadline = time.perf_counter() + 2
+    while time.perf_counter() < deadline and not any(
+        call["url"].endswith("/v1/directives") for call in calls
+    ):
+        time.sleep(0.02)
+    assert any(call["url"].endswith("/v1/directives") for call in calls)
+    assert s3.objects[_object_key()] == b"ID3fresh"
+
+
+def test_cold_import_starts_the_feed_and_not_boto3(monkeypatch):
+    calls = []
+    monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "skill")
+
+    def prefetch():
+        calls.append("prefetch")
+        return True
+
+    def touch_s3():
+        calls.append("s3")
+
+    monkeypatch.setattr("upcoming_trains.realtime.prefetch", prefetch)
+    monkeypatch.setattr(voice, "s3_client", touch_s3)
+    lambda_function._warm_lambda()
+    time.sleep(0.05)
+    assert calls == ["prefetch"]
 
 
 def test_a_slow_cache_miss_starts_elevenlabs_before_the_head_returns(s3, monkeypatch):

@@ -10,6 +10,9 @@ built. The key is not logged and is not part of an S3 key. There is no
 per-user clip quota; a bring-your-own key spends that account's credits.
 A cache miss tells Alexa to say "Checking the timetable" through the
 Directive Service, in the Alexa voice, without waiting on that call.
+The ElevenLabs POST is issued as soon as the sentence is known. The S3
+HEAD and that directive run beside it. boto3 is imported on the HEAD
+thread, not while the realtime feed is parsed: that import holds the GIL.
 """
 
 from __future__ import annotations
@@ -61,9 +64,10 @@ _sweep_lock = threading.Lock()
 # The deprecated optimize_streaming_latency flag only shortens time-to-first-byte,
 # and its strongest step turns off the text normalizer.
 _TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/" + ELEVENLABS_VOICE_ID
-# A cache HEAD from us-east-1 takes about a third of a second. Wait only this
-# long for it. If it is still running, start ElevenLabs anyway; a hit that
-# arrives later is what gets played, and that clip is not counted.
+# How long the TTS worker waits for a cache HEAD before it opens the socket.
+# A HEAD from us-east-1 takes about a third of a second, so this does not
+# wait one out. An instant hit must not spend a credit. A later hit is what
+# gets played, and that clip is not uploaded.
 _HEAD_LEAD_SECONDS = 0.1
 _MISSING = ("404", "NoSuchKey", "NotFound")
 _handler_started = None
@@ -72,6 +76,7 @@ _s3_lock = threading.Lock()
 _warm_started = False
 _probe = None
 _probe_lock = threading.Lock()
+_announce_lock = threading.Lock()
 
 
 def note_handler_start() -> None:
@@ -98,8 +103,10 @@ def request_timeout() -> float | None:
     """How long the ElevenLabs HTTP call may block, or None to skip it.
 
     The limit is the handler time still left, minus the S3 upload reserve
-    and a small margin. With no handler clock, the full 7 second budget is
-    used. There is no separate fixed cap.
+    and a small margin. With no handler clock, the full handler budget is
+    used. There is no separate fixed cap. Sample it when the sentence is
+    known, not after the cache HEAD: a cold client build is not part of
+    this wait.
     """
     left = _seconds_left()
     if left is None:
@@ -298,32 +305,27 @@ def _narrate(
         return _fail("deadline", fallback_ssml)
     moment = now or datetime.now(UTC)
     object_key = clip_object_key(text, moment)
-    client = s3_client()
-    _maybe_sweep(client, bucket, moment)
-    slot = _begin_head(text, client, bucket, object_key)
-    known = _finish_head(slot, _HEAD_LEAD_SECONDS)
-    if known and slot.get("hit") is True:
-        return _play(slot.get("client") or client, bucket, object_key, fallback_ssml)
+    # The HEAD thread imports boto3 and checks the clip. Neither that import
+    # nor the HEAD runs before the POST. The import holds the GIL, so doing
+    # it on this thread used to shrink the socket budget.
+    slot = _begin_head(text, bucket, object_key, moment)
+    if slot["ready"].is_set() and slot.get("hit") is True:
+        _finish_head(slot)
+        return _play(_client_from(slot), bucket, object_key, fallback_ssml)
     timeout = request_timeout()
     if timeout is None:
-        if not known:
-            _finish_head(slot)
-            if slot.get("hit") is True:
-                return _play(slot.get("client") or client, bucket, object_key, fallback_ssml)
-        return _fail("deadline", fallback_ssml)
-    if known:
-        _announce(progress)
-        started = time.perf_counter()
-        audio, reason = _synthesize(text, api_key, timeout)
-        add_ms("eleven_ms", (time.perf_counter() - started) * 1000.0)
-    else:
-        audio, reason = _generate_during_head(text, api_key, timeout, slot, progress)
+        _finish_head(slot)
         if slot.get("hit") is True:
-            return _play(slot.get("client") or client, bucket, object_key, fallback_ssml)
+            return _play(_client_from(slot), bucket, object_key, fallback_ssml)
+        return _fail("deadline", fallback_ssml)
+    audio, reason = _generate_during_head(text, api_key, timeout, slot, progress)
+    if slot.get("hit") is True:
+        return _play(_client_from(slot), bucket, object_key, fallback_ssml)
     if audio and len(audio) >= ELEVENLABS_MAX_AUDIO_BYTES:
         return _fail("too_long", fallback_ssml)
     if not audio:
         return _fail(reason or "eleven_error", fallback_ssml)
+    client = _client_from(slot)
     started = time.perf_counter()
     try:
         client.put_object(Bucket=bucket, Key=object_key, Body=audio, ContentType="audio/mpeg")
@@ -334,39 +336,69 @@ def _narrate(
     return _play(client, bucket, object_key, fallback_ssml)
 
 
+def _client_from(slot):
+    client = slot.get("client")
+    if client is not None:
+        return client
+    return s3_client()
+
+
 def _generate_during_head(text, api_key, timeout, slot, progress):
     """Start ElevenLabs while the HEAD is still open.
 
-    A hit that lands during the call is what gets played, and the generated
-    bytes are discarded. "Checking the timetable" waits until the HEAD says
-    the clip is new, so a cache hit stays quiet. The handler does not wait
-    for a discarded call.
+    The worker gives an instant hit `_HEAD_LEAD_SECONDS` to land, then opens
+    the socket anyway. A hit that lands during the call is what gets played,
+    and the generated bytes are discarded. "Checking the timetable" is sent
+    only once the HEAD says the clip is new, and the handler does not wait
+    for that POST or for a discarded call.
     """
     box = {
         "audio": None,
         "reason": "eleven_error",
         "ms": 0.0,
+        "skipped": False,
         "done": threading.Event(),
     }
 
     def run() -> None:
-        started = time.perf_counter()
         try:
+            if not slot["ready"].is_set():
+                slot["ready"].wait(_HEAD_LEAD_SECONDS)
+            if slot.get("hit") is True:
+                box["skipped"] = True
+                box["reason"] = ""
+                return
+            # The head already said this clip is new. Say so before the
+            # socket when the caller runs the directive inline (tests).
+            # In the skill the directive is its own thread. An unknown
+            # result (the HEAD failed) stays quiet and still tries TTS.
+            if slot["ready"].is_set() and slot.get("hit") is False:
+                _announce_once(slot, progress)
+            started = time.perf_counter()
             box["audio"], box["reason"] = _synthesize(text, api_key, timeout)
+            box["ms"] = (time.perf_counter() - started) * 1000.0
         except Exception:
             box["audio"], box["reason"] = None, "eleven_error"
         finally:
-            box["ms"] = (time.perf_counter() - started) * 1000.0
             box["done"].set()
 
     threading.Thread(target=run, daemon=True).start()
     _finish_head(slot)
     if slot.get("hit") is True:
         return None, ""
-    _announce(progress)
+    if slot.get("hit") is False:
+        _announce_once(slot, progress)
     box["done"].wait()
     add_ms("eleven_ms", box["ms"])
     return box["audio"], box["reason"]
+
+
+def _announce_once(slot, progress) -> None:
+    with _announce_lock:
+        if slot.get("announced"):
+            return
+        slot["announced"] = True
+    _announce(progress)
 
 
 def _spawn(target, args) -> None:
@@ -431,10 +463,14 @@ def _post_progressive(url: str, access_token: str, request_id: str) -> None:
 
 
 def warm_client() -> None:
-    """Import boto3 on a side thread so it overlaps the live-feed wait.
+    """Import boto3 on a side thread. Do not call this during the realtime parse.
 
-    The client is created once and reused. boto3's own pool keeps the TLS
-    connection. A failure here is retried by the next s3_client() call.
+    The import is pure Python and holds the GIL. On a cold start it ran
+    beside the first walk of a feed that was already in memory, and that
+    walk showed up as realtime_ms with realtime=cached. The narrate path
+    builds the client on the HEAD thread, which overlaps ElevenLabs instead.
+    The client is created once and reused. A failure is retried by the next
+    s3_client() call.
     """
     global _warm_started
     if _s3 is not None:
@@ -456,10 +492,11 @@ def _warm() -> None:
 
 
 def probe_cache(text: str, now: datetime | None = None) -> None:
-    """HEAD the clip for this text while the live feed is still downloading.
+    """HEAD the clip for this text. Used when the final sentence is already known.
 
     No bucket, or an empty sentence, does nothing. The result is used only
-    when the final sentence is this same text. `now` picks the Warsaw day.
+    when narrate is asked for this same text. `now` picks the Warsaw day.
+    This is not started while the realtime feed is being parsed.
     """
     global _probe
     sentence = (text or "").strip()
@@ -467,56 +504,49 @@ def probe_cache(text: str, now: datetime | None = None) -> None:
     if not sentence or not bucket:
         return
     moment = now or datetime.now(UTC)
-    slot = {
-        "text": sentence,
+    slot = _new_slot(sentence)
+    with _probe_lock:
+        _probe = slot
+    _start_head(slot, bucket, clip_object_key(sentence, moment), moment)
+
+
+def _new_slot(text: str) -> dict:
+    return {
+        "text": text,
         "hit": None,
         "client": None,
         "ms": 0.0,
         "ready": threading.Event(),
         "noted": False,
+        "announced": False,
     }
 
-    def run() -> None:
-        started = time.perf_counter()
-        try:
-            client = s3_client()
-            key = clip_object_key(sentence, moment)
-            slot["client"] = client
-            slot["hit"] = _exists(client, bucket, key)
-        except Exception:
-            slot["hit"] = None
-        finally:
-            slot["ms"] = (time.perf_counter() - started) * 1000.0
-            slot["ready"].set()
 
-    with _probe_lock:
-        _probe = slot
-    threading.Thread(target=run, daemon=True).start()
-
-
-def _begin_head(text: str, client, bucket: str, object_key: str):
+def _begin_head(text: str, bucket: str, object_key: str, moment: datetime):
     """The HEAD already running for this sentence, or a new one.
 
-    The live-feed path starts a probe while updates.pb is downloading. A
-    named hour has no feed, so the check starts here. It is not waited out
-    before ElevenLabs.
+    The client is built on this thread. Callers start ElevenLabs without
+    waiting for it.
     """
     with _probe_lock:
         slot = _probe
     if slot and slot.get("text") == text:
         return slot
-    slot = {
-        "text": text,
-        "hit": None,
-        "client": client,
-        "ms": 0.0,
-        "ready": threading.Event(),
-        "noted": False,
-    }
+    slot = _new_slot(text)
+    _start_head(slot, bucket, object_key, moment)
+    return slot
 
+
+def _start_head(slot, bucket: str, object_key: str, moment: datetime) -> None:
     def run() -> None:
         started = time.perf_counter()
         try:
+            client = s3_client()
+            slot["client"] = client
+            _maybe_sweep(client, bucket, moment)
+            # cache_ms is the HEAD itself. The client build overlaps TTS and
+            # is not part of that figure.
+            started = time.perf_counter()
             slot["hit"] = _exists(client, bucket, object_key)
         except Exception:
             slot["hit"] = None
@@ -525,7 +555,6 @@ def _begin_head(text: str, client, bucket: str, object_key: str):
             slot["ready"].set()
 
     threading.Thread(target=run, daemon=True).start()
-    return slot
 
 
 def _finish_head(slot, timeout=None) -> bool:
@@ -554,8 +583,9 @@ def _play(client, bucket: str, object_key: str, fallback_ssml: str) -> str:
 def s3_client():
     """The hosted-skill client: SigV4 and path-style, same as the sample util.
 
-    boto3 is imported here, not at module import. warm_client() starts that
-    import while the timetable work is still running.
+    boto3 is imported here, not at module import, and not while the realtime
+    feed is parsed. The HEAD thread is the one that calls this, beside the
+    ElevenLabs socket.
     """
     global _s3
     if _s3 is not None:

@@ -248,6 +248,80 @@ def test_cached_feed_bytes_are_reused_for_about_thirty_seconds(monkeypatch):
         reset_for_tests()
 
 
+def test_trip_index_matches_the_parser_including_a_deleted_entity():
+    """The fast index is what a cached body uses. It must keep the same trips."""
+    from upcoming_trains.realtime import _index_trips, _trip_update
+
+    deleted = _text(1, "gone") + _svar(2, 1) + _blob(3, _blob(1, _text(1, "T9")))
+    # The stop is stored before the descriptor, so the single-byte peek misses.
+    late_descriptor = _text(1, "T3") + _text(3, "20261022")
+    late = _blob(2, _svar(1, 7) + _svar(5, 1)) + _blob(1, late_descriptor) + _svar(5, -15)
+    payload = _feed() + _blob(2, deleted) + _blob(2, _text(1, "e3") + _blob(3, late))
+    parsed = parse_feed(payload, set())
+    timestamp, spans = _index_trips(payload)
+    assert timestamp == parsed.timestamp == 1_700_000_000
+    assert set(spans) == set(parsed.trips)
+    assert "T9" not in spans
+    assert "T3" in spans
+    view = memoryview(payload)
+    for trip_id, trip in parsed.trips.items():
+        got = _trip_update(view, spans[trip_id][0], spans[trip_id][1], {trip_id}, False)
+        assert got is not None
+        other = got[1]
+        assert other.cancelled == trip.cancelled
+        assert other.delay == trip.delay
+        assert other.start_date == trip.start_date
+        assert set(other.stops) == set(trip.stops)
+
+
+def test_a_deleted_entity_stays_out_of_a_cached_body(monkeypatch):
+    reset_for_tests()
+    deleted = _text(1, "gone") + _svar(2, 1) + _blob(3, _blob(1, _text(1, "T9")))
+    payload = _feed() + _blob(2, deleted)
+
+    def download(url, etag="", modified=""):
+        return payload
+
+    monkeypatch.setattr("upcoming_trains.realtime._download", download)
+    try:
+        feed = fetch_feed({"T1", "T9", "T2"})
+        assert set(feed.trips) == {"T1", "T2"}
+        assert feed.timestamp == 1_700_000_000
+        assert feed.trips["T2"].cancelled
+    finally:
+        reset_for_tests()
+
+
+def test_a_live_answer_does_not_open_s3(monkeypatch, sample_feed):
+    """Parsing a cached body must not import boto3. That import holds the GIL."""
+    from datetime import timezone
+
+    from upcoming_trains.answer import answer
+    from upcoming_trains.schedule import load
+
+    def explode(*args, **kwargs):
+        raise AssertionError("S3 waits until the sentence is spoken")
+
+    monkeypatch.setattr("upcoming_trains.voice.s3_client", explode)
+    monkeypatch.setattr("upcoming_trains.voice.probe_cache", explode)
+    monkeypatch.setenv("S3_PERSISTENCE_BUCKET", "alexa-hosted-bucket")
+    monkeypatch.setattr(
+        "upcoming_trains.realtime._download",
+        lambda url, etag="", modified="": _feed(),
+    )
+    reset_for_tests()
+    try:
+        schedule = load(str(sample_feed["schedule"]))
+        # 08:00 Warsaw on a service day, so the sample has candidates and the
+        # live fetch actually runs.
+        now = datetime(2026, 10, 22, 6, 0, tzinfo=timezone.utc)
+        spoken, status = answer(schedule, ["33548"], now=now, fetch=True)
+        assert spoken.plain
+        assert status["fetched"] is True
+    finally:
+        reset_for_tests()
+
+
 def test_timing_line_lists_the_stages_without_a_secret(capsys):
     begin(40, 12)
     add("realtime_ms", 80)
