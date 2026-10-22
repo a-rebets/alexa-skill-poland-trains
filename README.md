@@ -36,6 +36,18 @@ This repo is the station picker that the Alexa app opens during account linking,
 
 The skill's own code isn't in this repository.
 
+## Timetable data
+
+The station list (`stations.js`, `stations.json`) and the per-station directions (`directions.json`) aren't committed. They are build output. The [Refresh timetable](.github/workflows/refresh-timetable.yml) workflow builds them every Monday at about 07:00 Warsaw time, on every push to `main`, and on demand:
+
+1. Downloads the [Polish Trains GTFS](https://mkuran.pl/gtfs/) feed, which is regenerated daily from PKP PLK data, so diversions and closures show up once PLK publishes them.
+2. Runs `scripts/build_data.py`, which writes the picker files and the skill's compact timetable (`schedule.bin`). `lambda/upcoming_trains/` holds the few skill modules the build needs.
+3. Publishes the picker with GitHub Pages. The cache-busting version gets a digest of that week's data appended.
+4. Pushes `schedule.bin` to the Alexa-hosted skill when the timetable changed, waits for the deploy, and asks the skill for departures as a smoke test.
+5. Fails, so GitHub sends an email, if any step breaks or the feed's calendar ends within 10 days.
+
+To build locally: `python3 scripts/build_data.py --out build/lambda/data/schedule.bin --picker-dir .` (Python 3.10+, standard library only).
+
 ## Privacy
 
 You don't create an account, and nothing is stored on a server. What you pick (stations, directions and, if you add one, your ElevenLabs key) lives only inside the account-linking token. The skill sends the key only to ElevenLabs and never writes it to a file or log.

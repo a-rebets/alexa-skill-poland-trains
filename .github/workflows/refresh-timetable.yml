@@ -1,0 +1,231 @@
+name: Refresh timetable
+
+# Every Monday about 07:00 Warsaw time (05:00 UTC), on a push to main, or by hand.
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_hosted:
+        description: "Only rebuild the picker; leave the Alexa-hosted skill alone"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-timetable
+  cancel-in-progress: false
+
+env:
+  SKILL_ID: amzn1.ask.skill.fc4951e6-10b0-4b55-9b70-c52f081a435a
+  HOSTED_REPO: https://git-codecommit.us-east-1.amazonaws.com/v1/repos/fc4951e6-10b0-4b55-9b70-c52f081a435a
+  MIN_VALIDITY_DAYS: "10"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      feed_end: ${{ steps.feed.outputs.feed_end }}
+      feed_version: ${{ steps.feed.outputs.feed_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download the mkuran.pl feed and build the data
+        run: |
+          python3 scripts/build_data.py --out build/lambda/data/schedule.bin --picker-dir build/picker
+
+      - name: Read the feed window
+        id: feed
+        run: |
+          cat build/lambda/data/feed.json
+          echo "feed_end=$(jq -r .feed_end build/lambda/data/feed.json)" >> "$GITHUB_OUTPUT"
+          echo "feed_version=$(jq -r .feed_version build/lambda/data/feed.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble the Pages site
+        run: |
+          mkdir -p _site
+          cp index.html privacy.html picker.css picker.js _site/
+          cp -r icons docs _site/
+          cp build/picker/stations.js build/picker/stations.json build/picker/directions.json _site/
+          # Cache-busting: keep the hand-set version and append a digest of this week's data,
+          # so browsers fetch new station and direction files after every refresh.
+          base=$(sed -n 's/.*var CACHE = "\([^"]*\)".*/\1/p' picker.js)
+          test -n "$base"
+          digest=$(cat build/picker/stations.js build/picker/directions.json | sha256sum | cut -c1-8)
+          v="$base.$digest"
+          sed -i "s/var CACHE = \"$base\"/var CACHE = \"$v\"/" _site/picker.js
+          sed -i -E "s/(stations\.js|picker\.js)\?v=[^\"']*/\1?v=$v/g" _site/index.html
+          grep -q "stations.js?v=$v" _site/index.html
+          grep -q "var CACHE = \"$v\"" _site/picker.js
+          touch _site/.nojekyll
+          echo "data version $v"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambda-data
+          path: build/lambda/data/
+          retention-days: 14
+
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Check the picker serves stations
+        run: |
+          base="${{ steps.deployment.outputs.page_url }}"
+          for i in $(seq 1 12); do
+            js=$(curl -fsS "${base}stations.js?check=$GITHUB_RUN_ID" || true)
+            case "$js" in "window.STATIONS = ["*) echo "stations.js is live"; break ;; esac
+            sleep 10
+          done
+          case "$js" in "window.STATIONS = ["*) ;; *) echo "stations.js is not served"; exit 1 ;; esac
+          curl -fsS "${base}directions.json?check=$GITHUB_RUN_ID" | jq -e 'length > 1000' > /dev/null
+          curl -fsS "${base}index.html" | grep -q 'stations.js?v='
+
+  hosted:
+    # Pushes the new timetable to the Alexa-hosted skill, then asks the skill for departures.
+    needs: build
+    if: github.event_name != 'push' && !inputs.skip_hosted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: lambda-data
+          path: new-data
+
+      - name: Install the ASK CLI and its profile
+        env:
+          ASK_REFRESH_TOKEN: ${{ secrets.ASK_REFRESH_TOKEN }}
+          ASK_VENDOR_ID: ${{ secrets.ASK_VENDOR_ID }}
+        run: |
+          test -n "$ASK_REFRESH_TOKEN" || { echo "ASK_REFRESH_TOKEN secret is missing"; exit 1; }
+          test -n "$ASK_VENDOR_ID" || { echo "ASK_VENDOR_ID secret is missing"; exit 1; }
+          npm install -g --silent ask-cli@2.30.7
+          mkdir -p ~/.ask && umask 077
+          # An expired access token makes the CLI refresh it from the refresh token.
+          jq -n --arg r "$ASK_REFRESH_TOKEN" --arg v "$ASK_VENDOR_ID" '{
+            profiles: {default: {
+              token: {access_token: "", refresh_token: $r, token_type: "bearer",
+                      expires_in: 3600, expires_at: "2000-01-01T00:00:00.000Z"},
+              vendor_id: $v}}}' > ~/.ask/cli_config
+          # The git credential helper looks up the skill id from these two files.
+          mkdir -p ~/ask-project/.ask
+          echo '{"askcliResourcesVersion":"2020-03-31","profiles":{"default":{"skillInfrastructure":{"type":"@ask-cli/hosted-skill-deployer"}}}}' > ~/ask-project/ask-resources.json
+          echo "{\"askcliStatesVersion\":\"2020-03-31\",\"profiles\":{\"default\":{\"skillId\":\"$SKILL_ID\"}}}" > ~/ask-project/.ask/ask-states.json
+          ask smapi get-skill-status -s "$SKILL_ID" > /dev/null
+
+      - name: Clone the Alexa-hosted repository
+        run: |
+          git config --global credential.helper '!f(){ cd ~/ask-project && ask util git-credentials-helper "$@"; }; f'
+          git clone --quiet --branch master "$HOSTED_REPO" hosted
+          git -C hosted log --oneline -1
+
+      - name: Check the new index works with the deployed skill code
+        run: |
+          PYTHONPATH=hosted/lambda python3 - <<'PY'
+          from upcoming_trains.schedule import load
+          s = load("new-data/schedule.bin")
+          assert s.station_name("33506"), "Warszawa Zachodnia is missing"
+          print("index loads with the hosted code:", s.station_name("33506"))
+          PY
+
+      - name: Push schedule.bin if the timetable changed
+        id: push
+        run: |
+          old=$(python3 scripts/data_digest.py hosted/lambda/data/schedule.bin 2>/dev/null || echo none)
+          new=$(python3 scripts/data_digest.py new-data/schedule.bin)
+          echo "hosted $old"
+          echo "new    $new"
+          if [ "$old" = "$new" ]; then
+            echo "Timetable unchanged; nothing to push."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cp new-data/schedule.bin new-data/feed.json hosted/lambda/data/
+          cd hosted
+          git add lambda/data/schedule.bin lambda/data/feed.json
+          version=$(jq -r .feed_version lambda/data/feed.json)
+          end=$(jq -r .feed_end lambda/data/feed.json)
+          git -c user.name=Artem -c user.email=artem.rebets@gmail.com \
+            commit --quiet -m "Timetable refresh: feed $version, valid to $end" \
+            -m "Built by GitHub Actions run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git push origin HEAD:master
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the hosted deploy
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          COMMIT: ${{ steps.push.outputs.commit }}
+        run: |
+          for i in $(seq 1 60); do
+            status=$(ask smapi get-skill-status -s "$SKILL_ID" \
+              | jq -r '.hostedSkillDeployment.lastUpdateRequest | "\(.status) \(.deploymentDetails.commitId // "")"')
+            echo "$(date -u +%H:%M:%S) $status"
+            set -- $status
+            if [ "$2" = "$COMMIT" ]; then
+              case "$1" in
+                SUCCEEDED) exit 0 ;;
+                FAILED) echo "The hosted deploy failed."; exit 1 ;;
+              esac
+            fi
+            sleep 15
+          done
+          echo "The push did not trigger a hosted deploy within 15 minutes."
+          echo "Open the Alexa developer console, Code tab, and click Deploy."
+          exit 1
+
+      - name: Smoke test the live skill
+        run: |
+          python3 scripts/smoke_test.py write request.json
+          ask smapi invoke-skill-end-point -s "$SKILL_ID" -g development --endpoint-region EU \
+            --skill-request-body file:request.json > response.json || { cat response.json; exit 1; }
+          python3 scripts/smoke_test.py check response.json
+
+  validity:
+    # Fails the run (GitHub emails the owner) when the feed runs out within MIN_VALIDITY_DAYS.
+    needs: [build, pages, hosted]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the calendar window
+        env:
+          FEED_END: ${{ needs.build.outputs.feed_end }}
+        run: |
+          left=$(( ( $(date -ud "$FEED_END" +%s) - $(date -ud "$(date -u +%F)" +%s) ) / 86400 ))
+          echo "Feed valid to $FEED_END, $left days from today."
+          if [ "$left" -lt "$MIN_VALIDITY_DAYS" ]; then
+            echo "::error::The mkuran.pl feed ends in $left days ($FEED_END)."
+            exit 1
+          fi

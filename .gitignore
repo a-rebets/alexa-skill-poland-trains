@@ -1,0 +1,9 @@
+# Built weekly by .github/workflows/refresh-timetable.yml and published to Pages only.
+stations.js
+stations.json
+directions.json
+lambda/data/
+build/
+_site/
+__pycache__/
+*.pyc
