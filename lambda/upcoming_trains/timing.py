@@ -4,6 +4,8 @@
 `total_ms` is the handler only, from the start of `lambda_handler`.
 A warm request reports cold=0 and the import figures from this process,
 which were already paid before the handler.
+`fb` is why the Alexa voice was used (`none` when ElevenLabs spoke).
+`chars` is the length of the TTS sentence, not the sentence itself.
 """
 
 from __future__ import annotations
@@ -33,6 +35,8 @@ def begin(import_ms: float, schedule_ms: float) -> None:
             "eleven_ms": 0.0,
             "s3_put_ms": 0.0,
             "fallback": 0,
+            "fb": "none",
+            "chars": 0,
             "t0": time.perf_counter(),
         }
 
@@ -53,10 +57,36 @@ def set_realtime(kind: str) -> None:
             _current["realtime"] = kind
 
 
-def mark_fallback() -> None:
+def mark_fallback(reason: str = "") -> None:
+    """Record a fallback. The first reason wins; later calls do not replace it."""
+    cleaned = _reason(reason)
     with _lock:
-        if _current is not None:
-            _current["fallback"] = 1
+        if _current is None:
+            return
+        _current["fallback"] = 1
+        if _current.get("fb") in (None, "", "none"):
+            _current["fb"] = cleaned or "error"
+
+
+def set_chars(count: int) -> None:
+    """Character count of the sentence sent to TTS. The text stays out of the log."""
+    with _lock:
+        if _current is None:
+            return
+        try:
+            _current["chars"] = max(0, int(count))
+        except (TypeError, ValueError):
+            return
+
+
+def _reason(reason: str) -> str:
+    text = str(reason or "").strip().lower()
+    if not text or len(text) > 32:
+        return ""
+    for char in text:
+        if char not in "abcdefghijklmnopqrstuvwxyz0123456789_":
+            return ""
+    return text
 
 
 def emit() -> None:
@@ -69,7 +99,7 @@ def emit() -> None:
     print(
         "timing cold=%d import_ms=%.0f schedule_ms=%.0f realtime_ms=%.0f "
         "realtime=%s board_ms=%.0f cache_ms=%.0f eleven_ms=%.0f s3_put_ms=%.0f "
-        "total_ms=%.0f fallback=%d"
+        "total_ms=%.0f fallback=%d fb=%s chars=%d"
         % (
             current["cold"],
             current["import_ms"],
@@ -82,6 +112,8 @@ def emit() -> None:
             current["s3_put_ms"],
             total,
             current["fallback"],
+            current.get("fb") or "none",
+            int(current.get("chars") or 0),
         ),
         flush=True,
     )

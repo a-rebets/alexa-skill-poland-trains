@@ -53,10 +53,11 @@ ELEVENLABS_OUTPUT_FORMAT = "mp3_24000_48"
 # budget is 7 seconds from lambda_handler. That leaves about a second for
 # the runtime startup and the trip back to Alexa. The live feed may block
 # the handler for at most REALTIME_WAIT_SECONDS; a late feed becomes
-# scheduled times. ElevenLabs still never waits longer than 3 seconds, and
-# the S3 put keeps a small reserve after it.
+# scheduled times. ElevenLabs may use whatever is still left of the 7
+# seconds after the upload reserve and a small margin. A fixed 3 second
+# cap was too short for a full hour: from us-east-1 the call takes about
+# 2.6 seconds, and a longer sentence was cut off at 3 with budget left.
 HANDLER_BUDGET_SECONDS = 7.0
-ELEVENLABS_TIMEOUT_SECONDS = 3
 # The handler stops waiting this long after it starts. DNS, connect, TLS,
 # headers, and the body all count. A late file is scheduled times for this
 # request. The download itself keeps running and can fill the cache later.
@@ -67,16 +68,15 @@ REALTIME_SOCKET_TIMEOUT_SECONDS = 8.0
 # Reuse one downloaded protobuf this long, then revalidate with If-None-Match.
 # The file usually changes every 30–60 s, so a warm request skips the body.
 REALTIME_CACHE_SECONDS = 60
-ELEVENLABS_S3_RESERVE_SECONDS = 0.5
+# Held back from the ElevenLabs call so the MP3 can still be stored.
+# Observed puts from us-east-1 are about 0.4 seconds.
+ELEVENLABS_S3_RESERVE_SECONDS = 0.6
+# Slack after the upload for the presigned URL and the response itself.
+ELEVENLABS_TIMEOUT_MARGIN_SECONDS = 0.2
 ELEVENLABS_MIN_REQUEST_SECONDS = 0.4
 # Spoken in the Alexa voice while ElevenLabs generates. Must not block the handler.
 PROGRESSIVE_TIMEOUT_SECONDS = 1
 ELEVENLABS_URL_EXPIRY_SECONDS = 3600
-
-# New clips only. A cached clip does not count, and it still plays after a limit.
-# Each person pays for their own key, so the cap is per user per Warsaw day.
-ELEVENLABS_DAILY_GENERATIONS = 10
-ELEVENLABS_DAILY_CHARS = 15000
 
 # Alexa allows one response less than 240 seconds of audio, and one audio tag.
 ELEVENLABS_MAX_AUDIO_SECONDS = 240

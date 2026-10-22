@@ -2,8 +2,10 @@
 
 Departures are grouped by the next stop, arrivals by the previous stop, and
 then by the line code locals use (R3, S1, RL). Clock times stay on the screen. The coming hour is spoken as "in N
-minutes". A named hour is spoken as clock words ("eight oh five"), and the
-intro carries the only am or pm.
+minutes". A train in the current minute is "R one — now": the em dash is a
+short pause so the line code does not run into "now". Alexa uses a 150 ms
+break in that spot. A named hour is spoken as clock words ("eight oh five"),
+and the intro carries the only am or pm.
 
 Alexa SSML, reference updated 28 August 2025, has no pl-PL locale and none of
 the Polish Polly voices (Ewa, Maja, Jacek, Jan). POLISH_VOICE therefore stays
@@ -388,9 +390,8 @@ def _station_block(board: StationBoard, now: datetime, kind: str, clocks: bool =
     ssml_bits = [_direction_ssml(group, kind, clocks) for group in groups]
     screen_bits = [_direction_screen(group, kind) for group in groups]
     for line in long_lines:
-        phrase = _line_plain(line, clocks)
-        plain_bits.append(phrase)
-        ssml_bits.append(_escape(phrase))
+        plain_bits.append(_line_plain(line, clocks))
+        ssml_bits.append(_line_ssml(line, clocks))
         screen_bits.append(_line_screen(line))
     plain = f"{local} station. " + ". ".join(plain_bits) + "."
     markup = (
@@ -514,7 +515,7 @@ def _direction_plain(group: _DirectionGroup, kind: str, clocks: bool = False) ->
 def _direction_ssml(group: _DirectionGroup, kind: str, clocks: bool = False) -> str:
     lead = "From" if kind == "arrival" else "Towards"
     name = _ssml_name(group.name) if group.wrap else _escape(group.name)
-    body = ", ".join(_escape(_line_plain(line, clocks)) for line in group.lines)
+    body = ", ".join(_line_ssml(line, clocks) for line in group.lines)
     return f"{lead} {name}: {body}"
 
 
@@ -523,12 +524,36 @@ def _direction_screen(group: _DirectionGroup, kind: str) -> str:
     return f"{lead} {group.name}: " + ", ".join(_line_screen(line) for line in group.lines)
 
 
+# ElevenLabs runs "R one now" together. An em dash with spaces is a short pause.
+# Alexa gets a break of about the same length. The screen keeps clock digits.
+_NOW_GAP = " \u2014 "
+_NOW_BREAK = ' <break time="150ms"/> '
+
+
+def _opens_with_now(line: _LineGroup, clocks: bool) -> bool:
+    """True when the first spoken chunk is "now". Named hours use clocks instead."""
+    if clocks or not line.pairs:
+        return False
+    return line.pairs[0][0] <= 0
+
+
 def _line_plain(line: _LineGroup, clocks: bool = False) -> str:
     if line.pairs:
         if clocks:
             return f"{line.spoken} {_join_clocks([item[1] for item in line.pairs])}"
-        return f"{line.spoken} {_join_times([item[0] for item in line.pairs])}"
+        times = _join_times([item[0] for item in line.pairs])
+        if _opens_with_now(line, clocks):
+            return f"{line.spoken}{_NOW_GAP}{times}"
+        return f"{line.spoken} {times}"
     return f"{line.spoken} cancelled"
+
+
+def _line_ssml(line: _LineGroup, clocks: bool = False) -> str:
+    """Same words as the plain line. "now" is a break, and the tag stays unescaped."""
+    if not _opens_with_now(line, clocks):
+        return _escape(_line_plain(line, clocks))
+    times = _join_times([item[0] for item in line.pairs])
+    return _escape(line.spoken) + _NOW_BREAK + _escape(times)
 
 
 def speak_clock(hour: int, minute: int) -> str:
