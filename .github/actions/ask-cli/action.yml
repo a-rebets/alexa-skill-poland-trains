@@ -1,0 +1,45 @@
+name: Set up the ASK CLI
+description: Install ask-cli and the CodeCommit credential helper for the hosted skill.
+
+inputs:
+  skill-id:
+    description: Alexa skill id the git credential helper looks up
+    required: true
+  ask-refresh-token:
+    description: ASK_REFRESH_TOKEN secret
+    required: true
+  ask-vendor-id:
+    description: ASK_VENDOR_ID secret
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install the ASK CLI and its profile
+      shell: bash
+      env:
+        SKILL_ID: ${{ inputs.skill-id }}
+        ASK_REFRESH_TOKEN: ${{ inputs.ask-refresh-token }}
+        ASK_VENDOR_ID: ${{ inputs.ask-vendor-id }}
+      run: |
+        test -n "$ASK_REFRESH_TOKEN" || { echo "ASK_REFRESH_TOKEN secret is missing"; exit 1; }
+        test -n "$ASK_VENDOR_ID" || { echo "ASK_VENDOR_ID secret is missing"; exit 1; }
+        test -n "$SKILL_ID" || { echo "skill-id is missing"; exit 1; }
+        npm install -g --silent ask-cli@2.30.7
+        mkdir -p ~/.ask && umask 077
+        # An expired access token makes the CLI refresh it from the refresh token.
+        jq -n --arg r "$ASK_REFRESH_TOKEN" --arg v "$ASK_VENDOR_ID" '{
+          profiles: {default: {
+            token: {access_token: "", refresh_token: $r, token_type: "bearer",
+                    expires_in: 3600, expires_at: "2000-01-01T00:00:00.000Z"},
+            vendor_id: $v}}}' > ~/.ask/cli_config
+        # The git credential helper looks up the skill id from these two files.
+        mkdir -p ~/ask-project/.ask
+        echo '{"askcliResourcesVersion":"2020-03-31","profiles":{"default":{"skillInfrastructure":{"type":"@ask-cli/hosted-skill-deployer"}}}}' > ~/ask-project/ask-resources.json
+        echo "{\"askcliStatesVersion\":\"2020-03-31\",\"profiles\":{\"default\":{\"skillId\":\"$SKILL_ID\"}}}" > ~/ask-project/.ask/ask-states.json
+        ask smapi get-skill-status -s "$SKILL_ID" > /dev/null
+        git config --global credential.helper '!f(){ cd ~/ask-project && ask util git-credentials-helper "$@"; }; f'

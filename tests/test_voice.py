@@ -142,6 +142,17 @@ class FakeResponse:
         return False
 
 
+@pytest.fixture(autouse=True)
+def _isolated_handler_clock():
+    # lambda_handler starts the ElevenLabs budget clock and leaves it set.
+    # test_speech invokes the real handler. A later test then sees a budget
+    # shortened by however long the suite has been running, which fails the
+    # cache-miss timeout check when the runner is busy.
+    voice._handler_started = None
+    yield
+    voice._handler_started = None
+
+
 @pytest.fixture
 def s3(monkeypatch):
     voice._swept_for = ""

@@ -112,11 +112,11 @@ timing cold= import_ms= schedule_ms= realtime_ms= realtime= board_ms= cache_ms= 
 
 ## Deploying lambda changes
 
-The weekly Action updates `schedule.bin` and `feed.json` only. It does not deploy Python changes.
+A push to `main` that changes `lambda/` runs [Deploy skill code](.github/workflows/deploy-skill.yml), after pytest. The job clones the Alexa-hosted CodeCommit repository and copies `lambda/` onto the directory that contains `lambda_function.py`. It leaves `schedule.bin` and `feed.json` alone (the weekly refresh owns those) and it does not write `skill.json`. If `requirements.txt` would add or remove a dependency, the job prints the diff and keeps the hosted file. The hosted Python 3.8 runtime already provides boto3. Do not add it. `lambda/requirements.txt` in this repo lists no packages.
 
-Push `lambda/` to the Alexa-hosted CodeCommit repository. The branch Amazon created is usually `master`. That push is the deploy. `lambda_function.lambda_handler` is the handler. `lambda/requirements.txt` lists no packages. The hosted Python 3.8 runtime already provides boto3. Do not add it. The first deploy installs nothing from pip.
+The commit is pushed to `master` only when the code changed. That push is the deploy. The handler Amazon calls is `lambda_function.lambda_handler`. The job waits until `ask smapi get-skill-status` reports SUCCEEDED for that commit. A failed deploy is retried with an empty commit, up to twice. If no deploy starts within 15 minutes, the job fails. Open the Alexa developer console, Code tab, and click Deploy. The timetable refresh uses the same wait and the same hosted-push lock, so the two jobs cannot push at the same time.
 
-If the push does not start a deploy, open the Alexa developer console, Code tab, and click Deploy. That is the fallback. The Action does the same when a timetable push sits without a successful deploy: it retries with an empty commit, then tells you to use the console.
+`workflow_dispatch` with `dry_run` prints that diff and does not push.
 
 Do not copy `skill-package/skill.json` over the live manifest. Replacing the hosted endpoint ARNs with the placeholders in this file, or deleting the endpoints, disconnects the skill from its functions. Leave the hosted ARNs, region endpoints, and icon URIs as Amazon wrote them. Do not add an `accountLinking` block there.
 

@@ -1,0 +1,119 @@
+name: Deploy skill code
+
+# Push lambda/ to the Alexa-hosted skill when it changes on main.
+# A pull request does not run this workflow. workflow_dispatch can print
+# the diff and stop (dry_run) instead of pushing.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lambda/**"
+      - ".github/workflows/deploy-skill.yml"
+      - ".github/actions/ask-cli/**"
+      - "scripts/sync_hosted_lambda.py"
+      - "scripts/wait_hosted_deploy.sh"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Show the hosted diff and do not push"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  SKILL_ID: amzn1.ask.skill.fc4951e6-10b0-4b55-9b70-c52f081a435a
+  HOSTED_REPO: https://git-codecommit.us-east-1.amazonaws.com/v1/repos/fc4951e6-10b0-4b55-9b70-c52f081a435a
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pytest
+        run: python3 -m pip install pytest
+
+      - name: Run pytest
+        run: python3 -m pytest -q tests
+
+      - name: Run picker tests
+        run: node --test tests/picker.test.js
+
+  deploy:
+    needs: pytest
+    # Push to main, or a manual dispatch of main. Never a pull request.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: alexa-hosted-push
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: ./.github/actions/ask-cli
+        with:
+          skill-id: ${{ env.SKILL_ID }}
+          ask-refresh-token: ${{ secrets.ASK_REFRESH_TOKEN }}
+          ask-vendor-id: ${{ secrets.ASK_VENDOR_ID }}
+
+      - name: Clone the Alexa-hosted repository
+        run: |
+          git clone --quiet --branch master "$HOSTED_REPO" hosted
+          git -C hosted log --oneline -1
+          python3 scripts/sync_hosted_lambda.py hosted --print-code-root
+
+      - name: Sync lambda code
+        id: sync
+        run: |
+          dry=()
+          if [ "${{ inputs.dry_run }}" = "true" ]; then dry+=(--dry-run); fi
+          python3 scripts/sync_hosted_lambda.py hosted "${dry[@]}"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "Dry run: nothing was committed or pushed."
+            exit 0
+          fi
+          root=$(python3 scripts/sync_hosted_lambda.py hosted --print-code-root | tail -n 1)
+          cd hosted
+          git add -A -- "$root"
+          protected=$(git diff --cached --name-only | grep -E '(^|/)(schedule\.bin|feed\.json|skill\.json)$' || true)
+          if [ -n "$protected" ]; then
+            echo "::error::Refusing to commit timetable data or skill.json"
+            echo "$protected"
+            exit 1
+          fi
+          if git diff --cached --quiet; then
+            echo "Lambda code already matches the hosted repository."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git -c user.name=Artem -c user.email=artem.rebets@gmail.com \
+            commit -m "Deploy skill code $GITHUB_SHA" \
+            -m "From $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+          git push origin HEAD:master
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the hosted deploy
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: bash scripts/wait_hosted_deploy.sh hosted "${{ steps.sync.outputs.pushed }}" "skill code"
+
+      - name: Smoke test the live skill
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: |
+          python3 scripts/smoke_test.py write request.json
+          ask smapi invoke-skill-end-point -s "$SKILL_ID" -g development --endpoint-region EU \
+            --skill-request-body file:request.json > response.json || { cat response.json; exit 1; }
+          python3 scripts/smoke_test.py check response.json
