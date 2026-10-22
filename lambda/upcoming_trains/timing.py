@@ -27,6 +27,7 @@ def begin(import_ms: float, schedule_ms: float) -> None:
             "import_ms": float(import_ms or 0),
             "schedule_ms": float(schedule_ms or 0),
             "realtime_ms": 0.0,
+            "realtime": "off",
             "board_ms": 0.0,
             "cache_ms": 0.0,
             "eleven_ms": 0.0,
@@ -41,6 +42,15 @@ def add(name: str, milliseconds: float) -> None:
         if _current is None or name not in _current:
             return
         _current[name] = float(_current[name]) + float(milliseconds)
+
+
+def set_realtime(kind: str) -> None:
+    """`fresh` (new body), `cached` (memory or 304), `missed`, or `off`."""
+    if kind not in ("fresh", "cached", "missed", "off"):
+        return
+    with _lock:
+        if _current is not None:
+            _current["realtime"] = kind
 
 
 def mark_fallback() -> None:
@@ -58,13 +68,14 @@ def emit() -> None:
     total = (time.perf_counter() - current["t0"]) * 1000.0
     print(
         "timing cold=%d import_ms=%.0f schedule_ms=%.0f realtime_ms=%.0f "
-        "board_ms=%.0f cache_ms=%.0f eleven_ms=%.0f s3_put_ms=%.0f "
+        "realtime=%s board_ms=%.0f cache_ms=%.0f eleven_ms=%.0f s3_put_ms=%.0f "
         "total_ms=%.0f fallback=%d"
         % (
             current["cold"],
             current["import_ms"],
             current["schedule_ms"],
             current["realtime_ms"],
+            current["realtime"],
             current["board_ms"],
             current["cache_ms"],
             current["eleven_ms"],

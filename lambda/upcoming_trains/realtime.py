@@ -1,9 +1,15 @@
 """GTFS-Realtime reader for the Polish passenger feed.
 
-updates.pb is standard GTFS-Realtime, about 6 MB, and every trip id in it
+updates.pb is standard GTFS-Realtime, about 5 MB, and every trip id in it
 matches the static GTFS. updates.json is about 34 MB and is a custom document,
-not GTFS-Realtime JSON. The host does not gzip either file. The protobuf is
-the one that fits the response budget.
+not GTFS-Realtime JSON. The host accepts a gzip request but currently sends
+the protobuf uncompressed. The body is the one that fits the response budget.
+
+The handler never reads the socket itself. One background download owns DNS,
+connect, TLS, headers, and the body. The handler polls a deadline and then
+speaks scheduled times. A download already running is not started again.
+Lambda freezes that thread between invokes; the next thaw resumes it, and
+the bytes land in the cache when the read finishes.
 
 The parser walks the wire format and fully decodes only the trip ids the
 board asked for. It does not import a protobuf library.
@@ -29,17 +35,23 @@ from upcoming_trains.constants import (
     REALTIME_WAIT_SECONDS,
 )
 from upcoming_trains.timing import add as add_ms
+from upcoming_trains.timing import set_realtime
 
 UTC = timezone.utc
 _MAX_BYTES = 20_000_000
 _USER_AGENT = "upcoming-trains-skill/1.0 (+https://mkuran.pl/gtfs/)"
 _cache_lock = threading.Lock()
-_cache_cv = threading.Condition(_cache_lock)
 _conn_lock = threading.Lock()
 _conn = None
 _conn_host = ""
 _raw = None
-_raw_at = 0.0
+_stored_at = 0.0
+_etag = ""
+_modified = ""
+_generation = 0
+_parsed = {}
+_scanned = set()
+_feed_timestamp = None
 _worker = None
 _worker_error = ""
 
@@ -94,97 +106,218 @@ def updates_for_board(feed: ParsedFeed, now: datetime) -> tuple[dict[str, TripUp
 
 
 def prefetch(url: str = REALTIME_URL) -> bool:
-    """Start a download when the in-memory copy is older than about 30 seconds.
+    """Start a download when we have no body yet.
 
-    Returns True when that copy is already fresh, so the caller can skip work
-    that only exists to overlap a download.
+    Returns True when a body is already in memory, including one past the
+    TTL. The caller can skip work that only exists to overlap a download.
+    A stale body starts a conditional refresh and still counts as present.
+    A download that is already running is left alone.
     """
-    global _worker, _worker_error
     with _cache_lock:
-        if _cache_fresh():
+        if _raw is not None:
+            if not _within_ttl():
+                _start_worker_locked(url)
             return True
         if _worker is not None and _worker.is_alive():
             return False
-        _worker_error = ""
-        _worker = threading.Thread(target=_fill_cache, args=(url,), daemon=True)
-        _worker.start()
+        _start_worker_locked(url)
         return False
 
 
-def fetch_feed(wanted_trip_ids: set[str], url: str = REALTIME_URL) -> ParsedFeed:
-    """Parsed trips, or an error feed when the file is not here within the wait.
+def fetch_feed(
+    wanted_trip_ids: set[str],
+    url: str = REALTIME_URL,
+    deadline: float | None = None,
+) -> ParsedFeed:
+    """Parsed trips, or an error feed when no body is in memory by `deadline`.
 
-    A slow download keeps running in the background and can satisfy the next
-    request. This call does not block longer than REALTIME_WAIT_SECONDS.
+    `deadline` is a monotonic time. It defaults to 1.5 s from now. The live
+    path passes 1.5 s from the start of the handler. This function does not
+    open a socket; a slow download keeps running and can satisfy a later call.
     """
     started = time.perf_counter()
+    kind = "missed"
     try:
-        raw = _wait_for_bytes(url, REALTIME_WAIT_SECONDS)
-        if raw is None:
+        if deadline is None:
+            deadline = time.monotonic() + REALTIME_WAIT_SECONDS
+        kind = _acquire_feed(url, deadline)
+        if kind is None:
+            kind = "missed"
             with _cache_lock:
                 error = _worker_error or "timed out"
             return ParsedFeed(timestamp=None, trips={}, error=error)
-        return parse_feed(raw, wanted_trip_ids)
+        return _trips_from_cache(wanted_trip_ids)
     except Exception as exc:
+        kind = "missed"
         return ParsedFeed(timestamp=None, trips={}, error=str(exc) or exc.__class__.__name__)
     finally:
+        set_realtime(kind)
         add_ms("realtime_ms", (time.perf_counter() - started) * 1000.0)
 
 
 def reset_for_tests() -> None:
-    """Drop the cached file and release a test thread blocked in the download."""
-    global _raw, _raw_at, _worker, _worker_error
+    """Drop the cached file and detach a test thread blocked in the download."""
+    global _raw, _stored_at, _etag, _modified, _generation, _parsed, _scanned
+    global _feed_timestamp, _worker, _worker_error
     with _cache_lock:
         _raw = None
-        _raw_at = 0.0
+        _stored_at = 0.0
+        _etag = ""
+        _modified = ""
+        _generation += 1
+        _parsed = {}
+        _scanned = set()
+        _feed_timestamp = None
         _worker_error = ""
         _worker = None
-        _cache_cv.notify_all()
     with _conn_lock:
         _drop_connection()
 
 
-def _cache_fresh() -> bool:
-    return _raw is not None and (time.monotonic() - _raw_at) < REALTIME_CACHE_SECONDS
+def _within_ttl() -> bool:
+    return _raw is not None and (time.time() - _stored_at) < REALTIME_CACHE_SECONDS
+
+
+def _start_worker_locked(url: str) -> None:
+    """Start the single background download. The caller holds `_cache_lock`."""
+    global _worker, _worker_error
+    if _worker is not None and _worker.is_alive():
+        return
+    _worker_error = ""
+    _worker = threading.Thread(target=_fill_cache, args=(url,), daemon=True)
+    _worker.start()
 
 
 def _fill_cache(url: str) -> None:
-    global _raw, _raw_at, _worker_error
+    global _raw, _stored_at, _etag, _modified, _generation, _parsed, _scanned, _feed_timestamp
+    global _worker_error
     me = threading.current_thread()
+    with _cache_lock:
+        etag = _etag
+        modified = _modified
     try:
-        data = _download(url)
+        result = _download(url, etag, modified)
+    except TypeError:
+        try:
+            result = _download(url)
+        except Exception as exc:
+            _note_failure(me, exc)
+            return
     except Exception as exc:
-        message = "timed out" if isinstance(exc, (socket.timeout, TimeoutError)) else "fetch failed"
-        with _cache_lock:
-            if me is not _worker:
-                return
-            _worker_error = message
-            _cache_cv.notify_all()
+        _note_failure(me, exc)
         return
+    kind, data, new_etag, new_modified = _normalize_download(result)
     with _cache_lock:
         if me is not _worker:
             return
-        _raw = data
-        _raw_at = time.monotonic()
+        if kind == "not_modified":
+            if _raw is not None:
+                _stored_at = time.time()
+                if new_etag:
+                    _etag = new_etag
+                if new_modified:
+                    _modified = new_modified
+        elif data is not None:
+            _raw = data
+            _stored_at = time.time()
+            _etag = new_etag or ""
+            _modified = new_modified or ""
+            _generation += 1
+            _parsed = {}
+            _scanned = set()
+            _feed_timestamp = None
         _worker_error = ""
-        _cache_cv.notify_all()
 
 
-def _wait_for_bytes(url: str, timeout: float):
-    prefetch(url)
-    deadline = time.perf_counter() + timeout
+def _note_failure(me, exc: Exception) -> None:
+    global _worker_error
+    message = "timed out" if isinstance(exc, (socket.timeout, TimeoutError)) else "fetch failed"
     with _cache_lock:
-        while True:
-            if _cache_fresh():
-                return _raw
-            worker = _worker
-            failed = bool(_worker_error) and (worker is None or not worker.is_alive())
-            if failed:
-                return None
-            remaining = deadline - time.perf_counter()
-            if remaining <= 0:
-                return None
-            _cache_cv.wait(remaining)
+        if me is not _worker:
+            return
+        _worker_error = message
+
+
+def _normalize_download(result):
+    """Bytes from a test double, or the (`kind`, body, etag, modified) tuple."""
+    if isinstance(result, (bytes, bytearray)):
+        return "ok", bytes(result), "", ""
+    if not isinstance(result, tuple) or not result:
+        raise RuntimeError("realtime download returned nothing")
+    if result[0] == "not_modified":
+        etag = result[1] if len(result) > 1 else ""
+        modified = result[2] if len(result) > 2 else ""
+        return "not_modified", None, etag or "", modified or ""
+    if result[0] == "ok":
+        return "ok", result[1], result[2] if len(result) > 2 else "", result[3] if len(result) > 3 else ""
+    raise RuntimeError("realtime download returned an unknown result")
+
+
+def _acquire_feed(url: str, deadline: float):
+    """`cached`, `fresh`, or None when the deadline passes with no body.
+
+    The loop sleeps instead of waiting on the download's lock. A socket call
+    on the worker cannot hold this thread past the deadline.
+    """
+    with _cache_lock:
+        before = _generation
+        if _raw is not None:
+            if not _within_ttl():
+                _start_worker_locked(url)
+            return "cached"
+        if time.monotonic() >= deadline:
+            _start_worker_locked(url)
+            return None
+        _start_worker_locked(url)
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if _cache_lock.acquire(timeout=min(0.02, remaining)):
+            try:
+                if _raw is not None:
+                    return "fresh" if _generation != before else "cached"
+                worker = _worker
+                failed = bool(_worker_error) and (worker is None or not worker.is_alive())
+                if failed:
+                    return None
+            finally:
+                _cache_lock.release()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.02, remaining))
+    if _cache_lock.acquire(timeout=0.02):
+        try:
+            if _raw is not None:
+                return "fresh" if _generation != before else "cached"
+        finally:
+            _cache_lock.release()
+    return None
+
+
+def _trips_from_cache(wanted: set[str]) -> ParsedFeed:
+    """Trips for `wanted`, scanning the cached protobuf only for new ids."""
+    global _feed_timestamp
+    with _cache_lock:
+        raw = _raw
+        if raw is None:
+            return ParsedFeed(timestamp=None, trips={}, error="timed out")
+        if wanted <= _scanned:
+            trips = {trip_id: _parsed[trip_id] for trip_id in wanted if trip_id in _parsed}
+            return ParsedFeed(timestamp=_feed_timestamp, trips=trips)
+        scanned = set(_scanned)
+    missing = wanted - scanned
+    feed = parse_feed(raw, missing)
+    with _cache_lock:
+        if _raw is not raw:
+            return feed
+        _parsed.update(feed.trips)
+        _scanned.update(missing)
+        if feed.timestamp is not None:
+            _feed_timestamp = feed.timestamp
+        trips = {trip_id: _parsed[trip_id] for trip_id in wanted if trip_id in _parsed}
+        return ParsedFeed(timestamp=_feed_timestamp, trips=trips)
 
 
 def decompress_if_needed(raw: bytes, content_encoding: str | None = None) -> bytes:
@@ -193,8 +326,13 @@ def decompress_if_needed(raw: bytes, content_encoding: str | None = None) -> byt
     return raw
 
 
-def _download(url: str) -> bytes:
-    """GET the feed on a reused TLS connection. One retry covers a dead socket."""
+def _download(url: str, etag: str = "", modified: str = ""):
+    """GET the feed on a reused TLS connection. One retry covers a dead socket.
+
+    The socket timeout is an inactivity limit on this background thread. It
+    is not the handler's 1.5 s cap. A validator turns an unchanged file into
+    a 304 with an empty body.
+    """
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https" or not parts.hostname:
         raise ValueError("realtime url must be https")
@@ -206,6 +344,10 @@ def _download(url: str) -> bytes:
         "User-Agent": _USER_AGENT,
         "Connection": "keep-alive",
     }
+    if etag:
+        headers["If-None-Match"] = etag
+    elif modified:
+        headers["If-Modified-Since"] = modified
     last = None
     for _attempt in (1, 2):
         try:
@@ -217,13 +359,17 @@ def _download(url: str) -> bytes:
                 raw = response.read(_MAX_BYTES + 1)
                 status = response.status
                 encoding = response.getheader("Content-Encoding")
+                new_etag = response.getheader("ETag") or ""
+                new_modified = response.getheader("Last-Modified") or ""
+                if status == 304:
+                    return ("not_modified", new_etag or etag, new_modified or modified)
                 if status != 200:
                     _drop_connection()
                     raise RuntimeError("realtime feed status %s" % status)
                 if len(raw) > _MAX_BYTES:
                     _drop_connection()
                     raise RuntimeError("realtime feed is larger than 20 MB")
-            return decompress_if_needed(raw, encoding)
+            return ("ok", decompress_if_needed(raw, encoding), new_etag, new_modified)
         except Exception as exc:
             with _conn_lock:
                 _drop_connection()
@@ -331,6 +477,49 @@ def _entity(
     return _trip_update(view, trip_blob[0], trip_blob[1], wanted, keep_all)
 
 
+def _peek_trip_id(view: memoryview, start: int, end: int) -> str:
+    """The trip id in the descriptor, without walking that trip's stops.
+
+    The live feed puts the descriptor first. Unwanted trips are almost the
+    entire 5 MB, and their stop list is what made a warm parse take seconds.
+    """
+    index = start
+    while index < end:
+        tag, index = _varint(view, index, end)
+        field_number = tag >> 3
+        wire = tag & 7
+        if wire == 0:
+            _, index = _varint(view, index, end)
+            continue
+        if wire != 2:
+            index = _skip(view, index, end, wire)
+            continue
+        length, index = _varint(view, index, end)
+        if field_number == 1:
+            return _trip_id_only(view, index, index + length)
+        index += length
+    return ""
+
+
+def _trip_id_only(view: memoryview, start: int, end: int) -> str:
+    index = start
+    while index < end:
+        tag, index = _varint(view, index, end)
+        field_number = tag >> 3
+        wire = tag & 7
+        if wire == 0:
+            _, index = _varint(view, index, end)
+            continue
+        if wire != 2:
+            index = _skip(view, index, end, wire)
+            continue
+        length, index = _varint(view, index, end)
+        if field_number == 1:
+            return bytes(view[index : index + length]).decode("utf-8", "replace")
+        index += length
+    return ""
+
+
 def _trip_update(
     view: memoryview,
     start: int,
@@ -338,6 +527,8 @@ def _trip_update(
     wanted: set[str],
     keep_all: bool,
 ) -> tuple[str, TripUpdate] | None:
+    if not keep_all and _peek_trip_id(view, start, end) not in wanted:
+        return None
     index = start
     descriptor = None
     stop_blobs = []

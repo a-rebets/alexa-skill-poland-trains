@@ -57,11 +57,16 @@ ELEVENLABS_OUTPUT_FORMAT = "mp3_24000_48"
 # the S3 put keeps a small reserve after it.
 HANDLER_BUDGET_SECONDS = 7.0
 ELEVENLABS_TIMEOUT_SECONDS = 3
-# How long the handler waits for updates.pb. The socket itself may run a
-# little longer in the background so a late file can still fill the 30 s cache.
+# The handler stops waiting this long after it starts. DNS, connect, TLS,
+# headers, and the body all count. A late file is scheduled times for this
+# request. The download itself keeps running and can fill the cache later.
 REALTIME_WAIT_SECONDS = 1.5
-REALTIME_SOCKET_TIMEOUT_SECONDS = 3.0
-REALTIME_CACHE_SECONDS = 30
+# Inactivity limit for the background socket only. It is not the handler cap.
+# A steady transfer may take longer than this; a stalled socket may not.
+REALTIME_SOCKET_TIMEOUT_SECONDS = 8.0
+# Reuse one downloaded protobuf this long, then revalidate with If-None-Match.
+# The file usually changes every 30–60 s, so a warm request skips the body.
+REALTIME_CACHE_SECONDS = 60
 ELEVENLABS_S3_RESERVE_SECONDS = 0.5
 ELEVENLABS_MIN_REQUEST_SECONDS = 0.4
 # Spoken in the Alexa voice while ElevenLabs generates. Must not block the handler.
