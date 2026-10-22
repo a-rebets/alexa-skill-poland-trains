@@ -43,3 +43,11 @@ runs:
         echo "{\"askcliStatesVersion\":\"2020-03-31\",\"profiles\":{\"default\":{\"skillId\":\"$SKILL_ID\"}}}" > ~/ask-project/.ask/ask-states.json
         ask smapi get-skill-status -s "$SKILL_ID" > /dev/null
         git config --global credential.helper '!f(){ cd ~/ask-project && ask util git-credentials-helper "$@"; }; f'
+        # The pre-push hook `ask init` installs. It refuses a push while the skill is in
+        # certification review, when Alexa accepts the push but never deploys it.
+        s3=https://ask-tools-core-content.s3-us-west-2.amazonaws.com
+        mkdir -p ~/.ask/scripts ~/.ask/git-hooks
+        curl -fsS "$s3/auth_info" -o ~/.ask/auth_info
+        curl -fsS "$s3/git-hooks-templates/pre-push/ask-pre-push" -o ~/.ask/scripts/ask-pre-push
+        curl -fsS "$s3/git-hooks-templates/pre-push/pre-push" -o ~/.ask/git-hooks/pre-push
+        chmod 700 ~/.ask/auth_info ~/.ask/scripts/ask-pre-push ~/.ask/git-hooks/pre-push

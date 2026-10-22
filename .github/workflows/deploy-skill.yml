@@ -12,6 +12,7 @@ on:
       - ".github/actions/ask-cli/**"
       - "scripts/sync_hosted_lambda.py"
       - "scripts/wait_hosted_deploy.sh"
+      - "scripts/install_hosted_hook.sh"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -74,6 +75,7 @@ jobs:
         run: |
           git clone --quiet --branch master "$HOSTED_REPO" hosted
           git -C hosted log --oneline -1
+          bash scripts/install_hosted_hook.sh hosted
           python3 scripts/sync_hosted_lambda.py hosted --print-code-root
 
       - name: Sync lambda code

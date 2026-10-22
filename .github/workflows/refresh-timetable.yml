@@ -141,6 +141,7 @@ jobs:
         run: |
           git clone --quiet --branch master "$HOSTED_REPO" hosted
           git -C hosted log --oneline -1
+          bash scripts/install_hosted_hook.sh hosted
 
       - name: Check the new index works with the deployed skill code
         run: |
