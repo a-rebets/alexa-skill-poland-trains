@@ -1,0 +1,3 @@
+agency_id,agency_name,agency_url,agency_timezone
+SKM,SKM Warszawa,https://mkuran.pl/gtfs,Europe/Warsaw
+IC,PKP Intercity,https://mkuran.pl/gtfs,Europe/Warsaw

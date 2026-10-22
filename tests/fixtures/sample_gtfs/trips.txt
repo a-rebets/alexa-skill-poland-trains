@@ -1,0 +1,7 @@
+route_id,service_id,trip_id,trip_headsign,trip_short_name
+S1,WKD,T_S1,Warszawa Centralna,101
+EIP,WKD,T_EIP,Kraków Główny,3100
+S1,WKD,T_NIGHT,Warszawa Zachodnia,102
+S1,WKD,T_AM_WEST,Warszawa Zachodnia,103
+S1,WKD,T_AM_EAST,Warszawa Centralna,104
+S1,WKD,T_LAST,Warszawa Centralna,105

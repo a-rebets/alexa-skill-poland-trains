@@ -1,0 +1,5 @@
+# No third-party packages. The Alexa-hosted Python 3.8 runtime's standard
+# library is enough for the timetable, and that runtime already provides
+# boto3 for the hosted S3 bucket. Do not add boto3 here. ElevenLabs is
+# called with urllib. The API key comes from the account-linking token.
+# This runtime does not read a key file.
