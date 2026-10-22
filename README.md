@@ -1,20 +1,22 @@
-# Upcoming Trains
+# My Train Schedule
 
 <!-- After the skill is published, wrap this badge in a link to its Alexa Skills store page:
      <a href="https://www.amazon.com/dp/SKILL_ASIN"><img ...></a> -->
 <img src="docs/just-ask-alexa-badge.png" alt="Just Ask Alexa" width="190">
 
-An Alexa skill that tells you the next trains leaving your Polish railway stations.
+An Alexa skill for your next trains, now or at a time you choose. It currently supports Poland.
 
 <img src="docs/picker.png" alt="Station picker with Warszawa Centralna and Kraków Główny selected" width="240">
 
 ## Try it
 
-- "Alexa, upcoming trains."
-- "Alexa, ask upcoming trains for arrivals."
-- "Alexa, ask upcoming trains to change my stations."
+- "Alexa, open my train schedule."
+- "Alexa, ask my train schedule for arrivals."
+- "Alexa, ask my train schedule for departures at 8 am."
+- "Alexa, ask my train schedule for departures tomorrow at 8 am."
+- "Alexa, ask my train schedule to change my stations."
 
-Alexa reads the trains in the next 60 minutes at your stations, grouped by direction and line, with live delays when they're available. The skill speaks English (US and UK).
+Alexa reads the trains in the next 60 minutes at your stations, or in the hour from a time you name, grouped by direction and line. Live delays are included for the coming hour when they're available. The skill speaks English (US and UK).
 
 ## How it works
 
