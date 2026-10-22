@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#ffffff">
   <title>Privacy · Upcoming Trains</title>
-  <link rel="stylesheet" href="picker.css?v=5">
+  <link rel="stylesheet" href="picker.css?v=7">
 </head>
 <body>
   <main class="prose">
@@ -22,8 +22,8 @@
     </header>
     <h1>Privacy</h1>
     <p>This page is the station picker for a personal Alexa skill. It does not create an account, and it has no server of its own.</p>
-    <p>When you tap Done, the page hands Alexa an access token. That token contains only the station codes you selected. Alexa stores it on your Amazon account and sends it to the skill when you ask for trains. The skill uses it to look up a public timetable.</p>
-    <p>The page does not ask for your name, email, or payment details, and it does not use cookies or analytics.</p>
+    <p>When you tap Done, the page hands Alexa an access token. That token contains the station codes you selected. If you turn a direction off, it also contains the direction codes you left on, including whether long-distance trains stay included. If you paste an ElevenLabs API key, that optional key is part of the same token. Alexa stores the token on your Amazon account and sends it to the skill when you ask for trains. The skill uses the station codes to look up a public timetable. It sends the key only to ElevenLabs, to read the answer, and does not store the key. Leave the key empty and the skill uses the standard Alexa voice. An older token with only station codes still means every direction and the Alexa voice.</p>
+    <p>The page does not ask for your name or email, and it does not use cookies or analytics. The key is typed into the page and is not saved in this browser. It leaves only inside the account-linking token.</p>
     <p>Timetable data is published by PKP Polskie Linie Kolejowe S.A. and assembled as GTFS by <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>. Live delay data comes from that same feed.</p>
     <p><a href="index.html">Back to stations</a></p>
   </main>
