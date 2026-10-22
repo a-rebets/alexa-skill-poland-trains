@@ -5,25 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#ffffff">
-  <title>Choose stations · Upcoming Trains</title>
-  <link rel="stylesheet" href="picker.css?v=7">
+  <title>Choose stations · My Train Schedule</title>
+  <link rel="stylesheet" href="picker.css?v=8">
 </head>
 <body class="home">
   <main>
     <header class="mast">
-      <svg class="mark" viewBox="0 0 48 48" width="40" height="40" aria-hidden="true" focusable="false">
+      <svg class="mark" viewBox="0 0 48 48" width="40" height="40" role="img" aria-label="My Train Schedule" focusable="false">
+        <title>My Train Schedule</title>
         <rect width="48" height="48" fill="#E10600"/>
         <path fill="#fff" d="M11 18Q11 9 20 9h8q9 0 9 9v16q0 6-6 6H17q-6 0-6-6V18z"/>
         <rect x="16" y="14" width="16" height="9" rx="1.8" fill="#E10600"/>
         <circle cx="19" cy="32" r="2.6" fill="#E10600"/>
         <circle cx="29" cy="32" r="2.6" fill="#E10600"/>
       </svg>
-      <p class="brand">Upcoming Trains</p>
+      <p class="brand">My Train Schedule</p>
     </header>
     <p id="banner" class="banner" hidden></p>
     <section id="step-stations">
     <h1>Choose your stations</h1>
-    <p class="lede">Pick up to five. Alexa reads the next hour, Warsaw time, with live delays when the feed is fresh.</p>
+    <p class="lede">Pick up to five. Alexa reads the next hour, Warsaw time, with live delays when the feed is fresh. The skill currently supports only Poland. Other countries may come later.</p>
     <form id="finder" class="finder" role="search" action="#">
       <label class="sr" for="q">Search stations</label>
       <input id="q" type="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" inputmode="search" placeholder="Warszawa, Kraków, Gdańsk">
@@ -69,7 +70,7 @@
   <noscript>
     <p class="banner">Turn on JavaScript to choose stations.</p>
   </noscript>
-  <script src="stations.js?v=7"></script>
-  <script src="picker.js?v=7"></script>
+  <script src="stations.js?v=8"></script>
+  <script src="picker.js?v=8"></script>
 </body>
 </html>
