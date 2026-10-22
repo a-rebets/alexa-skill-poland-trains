@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#ffffff">
   <title>Choose stations · Upcoming Trains</title>
-  <link rel="stylesheet" href="picker.css?v=5">
+  <link rel="stylesheet" href="picker.css?v=7">
 </head>
 <body class="home">
   <main>
@@ -20,9 +20,10 @@
       </svg>
       <p class="brand">Upcoming Trains</p>
     </header>
-    <h1>Choose your stations</h1>
-    <p class="lede">Pick up to five. Alexa reads departures in the next hour, Warsaw time, with live delays when the feed is fresh.</p>
     <p id="banner" class="banner" hidden></p>
+    <section id="step-stations">
+    <h1>Choose your stations</h1>
+    <p class="lede">Pick up to five. Alexa reads the next hour, Warsaw time, with live delays when the feed is fresh.</p>
     <form id="finder" class="finder" role="search" action="#">
       <label class="sr" for="q">Search stations</label>
       <input id="q" type="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" inputmode="search" placeholder="Warszawa, Kraków, Gdańsk">
@@ -32,20 +33,43 @@
     <p id="live" class="sr" aria-live="polite"></p>
     <p id="choice" class="sr" aria-live="polite"></p>
     <ul id="results" class="results" aria-label="Stations"></ul>
-    <pre id="token" hidden></pre>
     <footer>
-      <p>No account is created here. Alexa stores only the station codes you pick.</p>
+      <p>No account is created here. Alexa stores the station codes you pick, the directions you leave on, and an ElevenLabs key if you paste one.</p>
       <p>Timetable data: PKP Polskie Linie Kolejowe S.A. GTFS feed: <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>.</p>
       <p><a href="privacy.html">Privacy</a></p>
     </footer>
+    </section>
+    <section id="step-directions" hidden>
+      <h1 id="directions-title" tabindex="-1">Choose directions</h1>
+      <p class="lede">Each direction covers trains going there and trains coming from there. Everything starts on.</p>
+      <p id="direction-hint" class="hint" hidden></p>
+      <div id="direction-sections"></div>
+      <p id="direction-live" class="sr" aria-live="polite"></p>
+    </section>
+    <section id="step-voice" hidden>
+      <h1 id="voice-title" tabindex="-1">Natural voice (optional)</h1>
+      <p class="lede">Answers are read by an ElevenLabs voice and billed to your key. Leave this empty for the standard Alexa voice.</p>
+      <div class="field">
+        <label for="eleven-key">ElevenLabs API key</label>
+        <input id="eleven-key" type="password" maxlength="128" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">
+      </div>
+      <p id="voice-hint" class="hint" hidden></p>
+      <p id="voice-live" class="sr" aria-live="polite"></p>
+      <p class="tip">Create a key at <a href="https://elevenlabs.io/">elevenlabs.io</a> restricted to text to speech, and set a credit limit.</p>
+      <p class="tip"><a href="privacy.html">Privacy</a></p>
+    </section>
+    <pre id="token" hidden></pre>
   </main>
   <div class="dock">
-    <button id="done" type="button" disabled>Done</button>
+    <div class="dock-inner">
+      <button id="back" type="button" hidden>Back</button>
+      <button id="done" type="button" disabled>Next</button>
+    </div>
   </div>
   <noscript>
     <p class="banner">Turn on JavaScript to choose stations.</p>
   </noscript>
-  <script src="stations.js?v=5"></script>
-  <script src="picker.js?v=5"></script>
+  <script src="stations.js?v=7"></script>
+  <script src="picker.js?v=7"></script>
 </body>
 </html>
