@@ -54,6 +54,14 @@ _scanned = set()
 _feed_timestamp = None
 _worker = None
 _worker_error = ""
+# Trip-id to TripUpdate span for the body in `_raw`. Built off the handler
+# once, when that body lands, so a cold start does not walk 6 MB of protobuf
+# on the request after it has already decided the bytes are cached.
+_index = None
+_index_for = -1
+_index_error = None
+_index_thread = None
+_index_thread_gen = -1
 
 # TripDescriptor.schedule_relationship
 _CANCELED = 3
@@ -170,6 +178,7 @@ def reset_for_tests() -> None:
         _feed_timestamp = None
         _worker_error = ""
         _worker = None
+        _drop_index_locked()
     with _conn_lock:
         _drop_connection()
 
@@ -226,6 +235,10 @@ def _fill_cache(url: str) -> None:
             _parsed = {}
             _scanned = set()
             _feed_timestamp = None
+            _drop_index_locked()
+            # Start before releasing the lock so a fetch that observes `_raw`
+            # joins this thread instead of walking the file itself.
+            _kick_index_locked(data, _generation)
         _worker_error = ""
 
 
@@ -297,27 +310,243 @@ def _acquire_feed(url: str, deadline: float):
 
 
 def _trips_from_cache(wanted: set[str]) -> ParsedFeed:
-    """Trips for `wanted`, scanning the cached protobuf only for new ids."""
-    global _feed_timestamp
+    """Trips for `wanted`. The first use of a cached body builds an index.
+
+    `realtime=cached` means the bytes were already in memory. The slow part
+    on a cold container is finding the trips, not the download. The index
+    starts when the body is stored, so this wait is only whatever is left.
+    """
     with _cache_lock:
         raw = _raw
+        generation = _generation
         if raw is None:
             return ParsedFeed(timestamp=None, trips={}, error="timed out")
         if wanted <= _scanned:
             trips = {trip_id: _parsed[trip_id] for trip_id in wanted if trip_id in _parsed}
             return ParsedFeed(timestamp=_feed_timestamp, trips=trips)
-        scanned = set(_scanned)
-    missing = wanted - scanned
-    feed = parse_feed(raw, missing)
+    index, err = _ensure_index(raw, generation)
+    if err is not None or index is None:
+        return _store_parsed(raw, wanted, parse_feed(raw, wanted))
+    view = memoryview(raw)
+    try:
+        decoded = {}
+        for trip_id in wanted:
+            span = index.get(trip_id)
+            if not span:
+                continue
+            parsed = _trip_update(view, span[0], span[1], {trip_id}, False)
+            if parsed is not None:
+                decoded[parsed[0]] = parsed[1]
+    except Exception:
+        return _store_parsed(raw, wanted, parse_feed(raw, wanted))
+    return _store_parsed(raw, wanted, ParsedFeed(timestamp=None, trips=decoded))
+
+
+def _store_parsed(raw: bytes, wanted: set[str], feed: ParsedFeed) -> ParsedFeed:
+    """Remember trips we have already decoded. A missing id is remembered too."""
+    global _feed_timestamp
     with _cache_lock:
         if _raw is not raw:
             return feed
         _parsed.update(feed.trips)
-        _scanned.update(missing)
+        _scanned.update(wanted)
         if feed.timestamp is not None:
             _feed_timestamp = feed.timestamp
         trips = {trip_id: _parsed[trip_id] for trip_id in wanted if trip_id in _parsed}
         return ParsedFeed(timestamp=_feed_timestamp, trips=trips)
+
+
+def _drop_index_locked() -> None:
+    """Forget the trip index. The caller holds `_cache_lock`."""
+    global _index, _index_for, _index_error, _index_thread, _index_thread_gen
+    _index = None
+    _index_for = -1
+    _index_error = None
+    _index_thread = None
+    _index_thread_gen = -1
+
+
+def _kick_index_locked(data: bytes, generation: int) -> None:
+    """Start indexing `data`. The caller holds `_cache_lock`."""
+    global _index_thread, _index_thread_gen
+    if _generation != generation or _raw is not data:
+        return
+    running = _index_thread
+    if (
+        _index_thread_gen == generation
+        and running is not None
+        and running.is_alive()
+    ):
+        return
+    _index_thread_gen = generation
+    _index_thread = threading.Thread(
+        target=_run_index, args=(data, generation), daemon=True
+    )
+    _index_thread.start()
+
+
+def _run_index(data: bytes, generation: int) -> None:
+    global _index, _index_for, _index_error, _feed_timestamp
+    error = None
+    spans = None
+    timestamp = None
+    try:
+        timestamp, spans = _index_trips(data)
+    except Exception as exc:
+        error = exc
+    with _cache_lock:
+        if _generation != generation or _raw is not data:
+            return
+        _index = {} if error is not None else spans
+        _index_error = error
+        _index_for = generation
+        if error is None and timestamp is not None:
+            _feed_timestamp = timestamp
+
+
+def _ensure_index(raw: bytes, generation: int):
+    """The finished index for this body, or `(None, error)` to fall back."""
+    with _cache_lock:
+        if _index_for == generation:
+            return _index, _index_error
+        thread = _index_thread if _index_thread_gen == generation else None
+        if thread is None or not thread.is_alive():
+            _kick_index_locked(raw, generation)
+            thread = _index_thread
+    if thread is not None:
+        thread.join()
+    with _cache_lock:
+        if _index_for == generation:
+            return _index, _index_error
+    return None, RuntimeError("realtime index was dropped")
+
+
+def _uvarint(data: bytes, index: int, limit: int) -> tuple[int, int]:
+    byte = data[index]
+    if byte < 128:
+        return byte, index + 1
+    number = byte & 0x7F
+    shift = 7
+    index += 1
+    while index < limit and shift <= 63:
+        byte = data[index]
+        index += 1
+        number |= (byte & 0x7F) << shift
+        if byte < 128:
+            return number, index
+        shift += 7
+    raise ValueError("bad varint in realtime feed")
+
+
+def _index_trips(data: bytes) -> tuple[int | None, dict]:
+    """Map each trip id to its TripUpdate slice, and read the feed timestamp.
+
+    Stop lists are skipped by length. A deleted entity is left out. The ids
+    match `parse_feed`; the slice is what `_trip_update` decodes.
+    """
+    spans = {}
+    timestamp = None
+    length = len(data)
+    index = 0
+    view = memoryview(data)
+    while index < length:
+        tag, index = _uvarint(data, index, length)
+        field = tag >> 3
+        wire = tag & 7
+        if wire == 0:
+            _, index = _uvarint(data, index, length)
+            continue
+        if wire == 1:
+            index += 8
+            if index > length:
+                raise ValueError("truncated realtime field")
+            continue
+        if wire == 5:
+            index += 4
+            if index > length:
+                raise ValueError("truncated realtime field")
+            continue
+        if wire != 2:
+            raise ValueError("unsupported protobuf wire type")
+        size, index = _uvarint(data, index, length)
+        end = index + size
+        if end > length:
+            raise ValueError("truncated realtime field")
+        if field == 1 and timestamp is None:
+            timestamp = _header_timestamp(view, index, end)
+        elif field == 2:
+            trip_id, span = _entity_span(data, view, index, end)
+            if trip_id and span is not None:
+                spans[trip_id] = span
+        index = end
+    return timestamp, spans
+
+
+def _entity_span(data: bytes, view: memoryview, start: int, end: int):
+    """`(trip id, slice)` for one FeedEntity, or `("", None)` when it has none."""
+    index = start
+    deleted = False
+    span = None
+    while index < end:
+        tag, index = _uvarint(data, index, end)
+        field = tag >> 3
+        wire = tag & 7
+        if wire == 0:
+            value, index = _uvarint(data, index, end)
+            if field == 2 and value:
+                deleted = True
+            continue
+        if wire == 1:
+            index += 8
+            if index > end:
+                raise ValueError("truncated realtime field")
+            continue
+        if wire == 5:
+            index += 4
+            if index > end:
+                raise ValueError("truncated realtime field")
+            continue
+        if wire != 2:
+            raise ValueError("unsupported protobuf wire type")
+        size, index = _uvarint(data, index, end)
+        blob_end = index + size
+        if blob_end > end:
+            raise ValueError("truncated realtime field")
+        if field == 3 and span is None:
+            span = (index, blob_end)
+        index = blob_end
+    if deleted or span is None:
+        return "", None
+    trip_id = _fast_trip_id(data, span[0], span[1])
+    if not trip_id:
+        trip_id = _peek_trip_id(view, span[0], span[1])
+    if not trip_id:
+        return "", None
+    return trip_id, span
+
+
+def _fast_trip_id(data: bytes, start: int, end: int) -> str:
+    """Trip id when the descriptor is the first TripUpdate field, else ''."""
+    if start >= end or data[start] != 0x0A:
+        return ""
+    index = start + 1
+    if index >= end:
+        return ""
+    try:
+        size, index = _uvarint(data, index, end)
+    except ValueError:
+        return ""
+    descriptor_end = index + size
+    if descriptor_end > end or index >= descriptor_end or data[index] != 0x0A:
+        return ""
+    index += 1
+    try:
+        size, index = _uvarint(data, index, end)
+    except ValueError:
+        return ""
+    if index + size > descriptor_end:
+        return ""
+    return data[index : index + size].decode("utf-8", "replace")
 
 
 def decompress_if_needed(raw: bytes, content_encoding: str | None = None) -> bytes:

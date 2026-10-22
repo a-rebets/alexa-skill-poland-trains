@@ -54,12 +54,11 @@ def answer(
         "fetched": False,
     }
     if live and wanted:
-        # Start the download, then build the scheduled sentence and HEAD its
-        # clip while the file is still on the wire. A warm copy is already
-        # in memory, so that extra board would only delay the real sentence.
+        # A body already in memory still has to be indexed once. That walk is
+        # the cold realtime=cached time. Do not import boto3 here: the import
+        # holds the GIL and used to stretch this step past half a second.
         deadline = _feed_deadline()
-        if not prefetch():
-            _probe_scheduled(schedule, stations, candidates, now, kind, window_start, choices)
+        prefetch()
         feed = fetch_feed(wanted, deadline=deadline)
         updates, note = updates_for_board(feed, now)
         status.update(
@@ -81,22 +80,6 @@ def answer(
     spoken = render(boards, note, now, kind, window_start)
     add_ms("board_ms", (time.perf_counter() - started) * 1000.0)
     return spoken, status
-
-
-def _probe_scheduled(schedule, stations, candidates, now, kind, window_start, choices) -> None:
-    """HEAD the clip for the scheduled sentence while updates.pb is downloading."""
-    started = time.perf_counter()
-    try:
-        from upcoming_trains.voice import probe_cache
-
-        boards = build_board(stations, candidates, None, now, kind, window_start)
-        _filter_directions(schedule, boards, choices)
-        spoken = render(boards, "", now, kind, window_start)
-        probe_cache(spoken.plain, now)
-    except Exception:
-        return
-    finally:
-        add_ms("board_ms", (time.perf_counter() - started) * 1000.0)
 
 
 def _feed_deadline() -> float:

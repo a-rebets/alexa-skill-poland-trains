@@ -49,15 +49,20 @@ ELEVENLABS_MODEL = "eleven_v4_turbo"
 ELEVENLABS_LANGUAGE = "en"
 ELEVENLABS_OUTPUT_FORMAT = "mp3_24000_48"
 # Alexa stops waiting at about 8 seconds, measured from the invoke, which
-# includes a short runtime startup before this process runs. The handler
-# budget is 7 seconds from lambda_handler. That leaves about a second for
-# the runtime startup and the trip back to Alexa. The live feed may block
-# the handler for at most REALTIME_WAIT_SECONDS; a late feed becomes
-# scheduled times. ElevenLabs may use whatever is still left of the 7
-# seconds after the upload reserve and a small margin. A fixed 3 second
-# cap was too short for a full hour: from us-east-1 the call takes about
-# 2.6 seconds, and a longer sentence was cut off at 3 with budget left.
-HANDLER_BUDGET_SECONDS = 7.0
+# includes runtime startup before lambda_handler and the trip back after
+# it returns. import_ms on a cold start is about 0.1 s and is outside this
+# budget. 7.5 s leaves 0.5 s for that startup, the import, and the response.
+# The previous 7.0 s budget reserved a full second. A cold ~230 character
+# answer then had about 3.5 s left for ElevenLabs after the 0.6 s upload
+# reserve and the 0.2 s margin, and the call needs about 4 s. 7.8 s would
+# leave too little for an unmeasured runtime bootstrap on top of the 8 s
+# limit. The live feed may block the handler for at most
+# REALTIME_WAIT_SECONDS; a late feed becomes scheduled times. ElevenLabs
+# may use whatever is still left after the upload reserve and a small
+# margin. A fixed 3 second cap was too short for a full hour: from
+# us-east-1 the call takes about 2.6 seconds, and a longer sentence was
+# cut off at 3 with budget left.
+HANDLER_BUDGET_SECONDS = 7.5
 # The handler stops waiting this long after it starts. DNS, connect, TLS,
 # headers, and the body all count. A late file is scheduled times for this
 # request. The download itself keeps running and can fill the cache later.
