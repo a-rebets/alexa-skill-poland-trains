@@ -115,6 +115,9 @@ jobs:
     # and a manual dispatch (unless skip_hosted) may write to the hosted repository.
     needs: build
     if: github.event_name != 'pull_request' && github.event_name != 'push' && !inputs.skip_hosted
+    concurrency:
+      group: alexa-hosted-push
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -123,39 +126,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - uses: actions/download-artifact@v4
         with:
           name: lambda-data
           path: new-data
 
-      - name: Install the ASK CLI and its profile
-        env:
-          ASK_REFRESH_TOKEN: ${{ secrets.ASK_REFRESH_TOKEN }}
-          ASK_VENDOR_ID: ${{ secrets.ASK_VENDOR_ID }}
-        run: |
-          test -n "$ASK_REFRESH_TOKEN" || { echo "ASK_REFRESH_TOKEN secret is missing"; exit 1; }
-          test -n "$ASK_VENDOR_ID" || { echo "ASK_VENDOR_ID secret is missing"; exit 1; }
-          npm install -g --silent ask-cli@2.30.7
-          mkdir -p ~/.ask && umask 077
-          # An expired access token makes the CLI refresh it from the refresh token.
-          jq -n --arg r "$ASK_REFRESH_TOKEN" --arg v "$ASK_VENDOR_ID" '{
-            profiles: {default: {
-              token: {access_token: "", refresh_token: $r, token_type: "bearer",
-                      expires_in: 3600, expires_at: "2000-01-01T00:00:00.000Z"},
-              vendor_id: $v}}}' > ~/.ask/cli_config
-          # The git credential helper looks up the skill id from these two files.
-          mkdir -p ~/ask-project/.ask
-          echo '{"askcliResourcesVersion":"2020-03-31","profiles":{"default":{"skillInfrastructure":{"type":"@ask-cli/hosted-skill-deployer"}}}}' > ~/ask-project/ask-resources.json
-          echo "{\"askcliStatesVersion\":\"2020-03-31\",\"profiles\":{\"default\":{\"skillId\":\"$SKILL_ID\"}}}" > ~/ask-project/.ask/ask-states.json
-          ask smapi get-skill-status -s "$SKILL_ID" > /dev/null
+      - uses: ./.github/actions/ask-cli
+        with:
+          skill-id: ${{ env.SKILL_ID }}
+          ask-refresh-token: ${{ secrets.ASK_REFRESH_TOKEN }}
+          ask-vendor-id: ${{ secrets.ASK_VENDOR_ID }}
 
       - name: Clone the Alexa-hosted repository
         run: |
-          git config --global credential.helper '!f(){ cd ~/ask-project && ask util git-credentials-helper "$@"; }; f'
           git clone --quiet --branch master "$HOSTED_REPO" hosted
           git -C hosted log --oneline -1
 
@@ -196,51 +179,7 @@ jobs:
         # Also runs when nothing was pushed, to make sure the last commit is the one deployed.
         # An Alexa-hosted deploy fails now and then for no visible reason; an empty commit
         # retries it, up to twice.
-        run: |
-          cd hosted
-          deploy_state() {
-            ask smapi get-skill-status -s "$SKILL_ID" \
-              | jq -r '.hostedSkillDeployment.lastUpdateRequest | "\(.status) \(.deploymentDetails.commitId // "")"'
-          }
-          redeploy() {
-            git -c user.name=Artem -c user.email=artem.rebets@gmail.com \
-              commit --quiet --allow-empty -m "Redeploy timetable refresh (retry $1)"
-            git push origin HEAD:master
-          }
-          attempt=1
-          set -- $(deploy_state)
-          if [ "$2" = "$(git rev-parse HEAD)" ] && [ "$1" = "SUCCEEDED" ]; then
-            echo "Hosted master $2 is deployed."
-            exit 0
-          fi
-          if [ "${{ steps.push.outputs.pushed }}" != "true" ]; then
-            echo "Hosted master is not the deployed commit ($*); redeploying."
-            attempt=2
-            redeploy 1
-          fi
-          while :; do
-            commit=$(git rev-parse HEAD)
-            result=timeout
-            for i in $(seq 1 60); do
-              set -- $(deploy_state)
-              echo "$(date -u +%H:%M:%S) $*"
-              if [ "$2" = "$commit" ] && [ "$1" != "IN_PROGRESS" ]; then result=$1; break; fi
-              sleep 15
-            done
-            case "$result" in
-              SUCCEEDED) echo "Deployed $commit."; exit 0 ;;
-              timeout)
-                echo "::error::The push did not trigger a hosted deploy within 15 minutes. Open the Alexa developer console, Code tab, and click Deploy."
-                exit 1 ;;
-            esac
-            if [ "$attempt" -ge 3 ]; then
-              echo "::error::The hosted deploy failed $attempt times. Check the Code tab in the Alexa developer console."
-              exit 1
-            fi
-            echo "Deploy of $commit ended $result; retrying with an empty commit."
-            redeploy "$attempt"
-            attempt=$((attempt + 1))
-          done
+        run: bash scripts/wait_hosted_deploy.sh hosted "${{ steps.push.outputs.pushed }}" "timetable refresh"
 
       - name: Smoke test the live skill
         run: |

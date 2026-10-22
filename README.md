@@ -29,12 +29,12 @@ Alexa reads the trains in the next 60 minutes at your stations, or in the hour f
 
 ## What this repository is
 
-This repo is the station picker that the Alexa app opens during account linking, plus the skill's privacy policy. Both are static pages served by GitHub Pages:
+The full skill lives in this repository: the Lambda code, the interaction model, the station picker, and the timetable build. See [ARCHITECTURE.md](ARCHITECTURE.md) for the technical details.
+
+The station picker and the privacy policy are static pages served by GitHub Pages:
 
 - Station picker: https://a-rebets.github.io/alexa-skill-poland-trains/
 - Privacy policy: https://a-rebets.github.io/alexa-skill-poland-trains/privacy.html
-
-The skill's own code isn't in this repository.
 
 ## Timetable data
 
