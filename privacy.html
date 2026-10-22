@@ -5,23 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#ffffff">
-  <title>Privacy · Upcoming Trains</title>
-  <link rel="stylesheet" href="picker.css?v=7">
+  <title>Privacy · My Train Schedule</title>
+  <link rel="stylesheet" href="picker.css?v=8">
 </head>
 <body>
   <main class="prose">
     <header class="mast">
-      <svg class="mark" viewBox="0 0 48 48" width="40" height="40" aria-hidden="true" focusable="false">
+      <svg class="mark" viewBox="0 0 48 48" width="40" height="40" role="img" aria-label="My Train Schedule" focusable="false">
+        <title>My Train Schedule</title>
         <rect width="48" height="48" fill="#E10600"/>
         <path fill="#fff" d="M11 18Q11 9 20 9h8q9 0 9 9v16q0 6-6 6H17q-6 0-6-6V18z"/>
         <rect x="16" y="14" width="16" height="9" rx="1.8" fill="#E10600"/>
         <circle cx="19" cy="32" r="2.6" fill="#E10600"/>
         <circle cx="29" cy="32" r="2.6" fill="#E10600"/>
       </svg>
-      <p class="brand">Upcoming Trains</p>
+      <p class="brand">My Train Schedule</p>
     </header>
     <h1>Privacy</h1>
-    <p>This page is the station picker for a personal Alexa skill. It does not create an account, and it has no server of its own.</p>
+    <p>This page is the station picker for a personal Alexa skill. The timetable currently supports only Poland, and other countries may be added later. It does not create an account, and it has no server of its own.</p>
     <p>When you tap Done, the page hands Alexa an access token. That token contains the station codes you selected. If you turn a direction off, it also contains the direction codes you left on, including whether long-distance trains stay included. If you paste an ElevenLabs API key, that optional key is part of the same token. Alexa stores the token on your Amazon account and sends it to the skill when you ask for trains. The skill uses the station codes to look up a public timetable. It sends the key only to ElevenLabs, to read the answer, and does not store the key. Leave the key empty and the skill uses the standard Alexa voice. An older token with only station codes still means every direction and the Alexa voice.</p>
     <p>The page does not ask for your name or email, and it does not use cookies or analytics. The key is typed into the page and is not saved in this browser. It leaves only inside the account-linking token.</p>
     <p>Timetable data is published by PKP Polskie Linie Kolejowe S.A. and assembled as GTFS by <a href="https://mkuran.pl/gtfs/">Mikołaj Kuranowski</a>. Live delay data comes from that same feed.</p>
