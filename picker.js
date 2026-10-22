@@ -111,13 +111,63 @@
     return scored.slice(0, cap).map(function (item) { return item.station; });
   }
 
-  function encodeToken(ids) {
-    var json = JSON.stringify(ids);
+  var TRAIN_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M8 12.5Q8 8 12 8h8q4 0 4 4.5V20q0 2.2-2.2 2.2H10.2Q8 22.2 8 20v-7.5z"/><rect x="11.2" y="11.2" width="9.6" height="4.4" rx="1" fill="currentColor"/><circle cx="13" cy="24.2" r="1.5" fill="currentColor"/><circle cx="19" cy="24.2" r="1.5" fill="currentColor"/></svg>';
+  var CACHE = "7";
+  var KEY_RE = /^[A-Za-z0-9_-]{8,128}$/;
+
+  function b64url(json) {
     var bytes = new TextEncoder().encode(json);
     var binary = "";
     for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    var b64 = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-    return "v1." + b64;
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+
+  function encodeToken(ids) {
+    return "v1." + b64url(JSON.stringify(ids));
+  }
+
+  function choiceFor(options, pressed) {
+    var ids = (options || []).map(function (option) { return option.id; });
+    var on = [];
+    ids.forEach(function (id) {
+      if (pressed[id]) on.push(id);
+    });
+    if (!ids.length || on.length === ids.length) return null;
+    on.sort();
+    return on;
+  }
+
+  function usableKey(value) {
+    var key = String(value == null ? "" : value).trim();
+    return KEY_RE.test(key) ? key : "";
+  }
+
+  function encodeChoices(choices, apiKey) {
+    var payload = [];
+    var seen = {};
+    (choices || []).forEach(function (pair) {
+      var id = pair[0];
+      if (seen[id]) return;
+      seen[id] = true;
+      var dirs = pair[1];
+      if (dirs == null) {
+        payload.push([id, null]);
+        return;
+      }
+      var cleaned = [];
+      var have = {};
+      dirs.forEach(function (dir) {
+        if (!have[dir]) {
+          have[dir] = true;
+          cleaned.push(dir);
+        }
+      });
+      cleaned.sort();
+      payload.push([id, cleaned.length ? cleaned : null]);
+    });
+    var key = usableKey(apiKey);
+    var body = key ? { c: payload, k: key } : payload;
+    return "v2." + b64url(JSON.stringify(body));
   }
 
   function isAllowedRedirect(uri) {
@@ -314,6 +364,10 @@
     var params = new URLSearchParams(search || "");
     var mode = classify(params, search);
     var selected = [];
+    var step = 1;
+    var directionData = null;
+    var pressed = {};
+    var hiddenPreview = previewHidden(params);
     var banner = document.getElementById("banner");
     var input = document.getElementById("q");
     var results = document.getElementById("results");
@@ -349,7 +403,9 @@
     function render() {
       var n = selected.length;
       done.disabled = n === 0 || mode.mode === "error";
-      done.textContent = n === 0 ? "Done" : "Done · " + n + " station" + (n === 1 ? "" : "s");
+      if (step === 1) {
+        done.textContent = n === 0 ? "Next" : "Next · " + n + " station" + (n === 1 ? "" : "s");
+      }
       if (limit) {
         limit.hidden = n < MAX_STATIONS;
         limit.textContent = n >= MAX_STATIONS ? LIMIT_TEXT : "";
@@ -453,10 +509,210 @@
     input.addEventListener("input", onType);
     input.addEventListener("search", onType);
     if (form) form.addEventListener("submit", function (event) { event.preventDefault(); });
-    done.addEventListener("click", function () {
-      if (done.disabled) return;
-      var ids = selected.map(function (station) { return station.id; });
-      var token = encodeToken(ids);
+    var stepStations = document.getElementById("step-stations");
+    var stepDirections = document.getElementById("step-directions");
+    var stepVoice = document.getElementById("step-voice");
+    var sections = document.getElementById("direction-sections");
+    var hint = document.getElementById("direction-hint");
+    var directionLive = document.getElementById("direction-live");
+    var title = document.getElementById("directions-title");
+    var voiceTitle = document.getElementById("voice-title");
+    var keyInput = document.getElementById("eleven-key");
+    var voiceHint = document.getElementById("voice-hint");
+    var voiceLive = document.getElementById("voice-live");
+
+    function showStations() {
+      step = 1;
+      if (stepStations) stepStations.hidden = false;
+      if (stepDirections) stepDirections.hidden = true;
+      if (stepVoice) stepVoice.hidden = true;
+      if (back) back.hidden = true;
+      if (hint) hint.hidden = true;
+      render();
+      input.focus();
+    }
+
+    function setHint(text) {
+      if (hint) {
+        hint.hidden = !text;
+        hint.textContent = text || "";
+      }
+      if (directionLive) directionLive.textContent = text || "";
+    }
+
+    function paintDirections() {
+      if (!sections) return;
+      sections.innerHTML = "";
+      selected.forEach(function (station) {
+        var options = (directionData && directionData[station.id]) || [];
+        var block = document.createElement("section");
+        block.className = "station-block";
+        var heading = document.createElement("h2");
+        heading.id = "station-" + station.id;
+        heading.textContent = station.name;
+        var list = document.createElement("ul");
+        list.className = "directions";
+        list.setAttribute("role", "group");
+        list.setAttribute("aria-labelledby", heading.id);
+        block.appendChild(heading);
+        if (!options.length) {
+          var empty = document.createElement("p");
+          empty.className = "loading";
+          empty.textContent = "Every train from this station.";
+          block.appendChild(empty);
+        }
+        options.forEach(function (option) {
+          var item = document.createElement("li");
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "direction";
+          var on = !!(pressed[station.id] && pressed[station.id][option.id]);
+          button.setAttribute("aria-pressed", on ? "true" : "false");
+          var icon = document.createElement("span");
+          icon.className = "train";
+          icon.innerHTML = TRAIN_SVG;
+          var copy = document.createElement("span");
+          copy.className = "direction-copy";
+          var name = document.createElement("span");
+          name.className = "direction-name";
+          name.textContent = option.name;
+          copy.appendChild(name);
+          if (option.lines && option.lines.length) {
+            var lines = document.createElement("span");
+            lines.className = "line-list";
+            lines.textContent = option.lines.join(" · ");
+            copy.appendChild(lines);
+          }
+          var check = document.createElement("span");
+          check.className = "check";
+          check.setAttribute("aria-hidden", "true");
+          check.innerHTML = CHECK_SVG;
+          button.appendChild(icon);
+          button.appendChild(copy);
+          button.appendChild(check);
+          button.addEventListener("click", function () {
+            toggleDirection(station, option, options);
+          });
+          item.appendChild(button);
+          list.appendChild(item);
+        });
+        block.appendChild(list);
+        sections.appendChild(block);
+      });
+    }
+
+    function toggleDirection(station, option, options) {
+      var state = pressed[station.id];
+      if (!state) return;
+      var turningOff = !!state[option.id];
+      if (turningOff) {
+        var still = options.some(function (item) {
+          return item.id !== option.id && state[item.id];
+        });
+        if (!still) {
+          setHint("Keep at least one direction for " + station.name + ".");
+          return;
+        }
+      }
+      state[option.id] = !turningOff;
+      setHint("");
+      if (directionLive) {
+        directionLive.textContent = option.name + (state[option.id] ? " on." : " off.");
+      }
+      paintDirections();
+    }
+
+    function armPressed() {
+      selected.forEach(function (station) {
+        var options = (directionData && directionData[station.id]) || [];
+        var state = {};
+        var hide = hiddenPreview[station.id] || {};
+        options.forEach(function (option) {
+          state[option.id] = !hide[option.id];
+        });
+        var any = options.some(function (option) { return state[option.id]; });
+        if (options.length && !any) {
+          state[options[0].id] = true;
+        }
+        pressed[station.id] = state;
+      });
+    }
+
+    function showDirectionStep() {
+      step = 2;
+      if (stepStations) stepStations.hidden = true;
+      if (stepDirections) stepDirections.hidden = false;
+      if (stepVoice) stepVoice.hidden = true;
+      if (back) back.hidden = false;
+      done.disabled = false;
+      done.textContent = "Next";
+      paintDirections();
+      if (title && title.focus) title.focus();
+    }
+
+    function refreshKeyHint() {
+      var raw = keyInput ? keyInput.value.trim() : "";
+      var text = raw && !KEY_RE.test(raw)
+        ? "That isn't a usable key. Clear it, or paste the key from ElevenLabs. Done will use the Alexa voice."
+        : "";
+      if (voiceHint) {
+        voiceHint.hidden = !text;
+        voiceHint.textContent = text;
+      }
+      if (voiceLive) voiceLive.textContent = text;
+    }
+
+    function showVoice() {
+      step = 3;
+      if (stepStations) stepStations.hidden = true;
+      if (stepDirections) stepDirections.hidden = true;
+      if (stepVoice) stepVoice.hidden = false;
+      if (back) back.hidden = false;
+      done.disabled = false;
+      done.textContent = "Done";
+      refreshKeyHint();
+      if (voiceTitle && voiceTitle.focus) voiceTitle.focus();
+    }
+
+    function openDirections() {
+      if (!selected.length || !stepDirections) {
+        finish();
+        return;
+      }
+      step = 2;
+      if (stepStations) stepStations.hidden = true;
+      if (stepDirections) stepDirections.hidden = false;
+      if (stepVoice) stepVoice.hidden = true;
+      if (back) back.hidden = false;
+      done.disabled = true;
+      done.textContent = "Next";
+      if (sections) {
+        sections.innerHTML = "";
+        var waiting = document.createElement("p");
+        waiting.className = "loading";
+        waiting.textContent = "Loading directions.";
+        sections.appendChild(waiting);
+      }
+      loadDirections().then(function (data) {
+        directionData = data || {};
+        armPressed();
+        showDirectionStep();
+      }, function () {
+        directionData = {};
+        armPressed();
+        setHint("Directions didn't load. Next includes every train.");
+        showDirectionStep();
+      });
+    }
+
+    function finish() {
+      var choices = selected.map(function (station) {
+        var options = (directionData && directionData[station.id]) || [];
+        var state = pressed[station.id] || {};
+        return [station.id, choiceFor(options, state)];
+      });
+      var voiceKey = mode.mode === "link" && keyInput ? keyInput.value : "";
+      var token = choices.length ? encodeChoices(choices, voiceKey) : encodeToken(selected.map(function (station) { return station.id; }));
       if (mode.mode !== "link") {
         if (tokenBox) {
           tokenBox.hidden = false;
@@ -465,9 +721,77 @@
         return;
       }
       window.location.replace(buildRedirect(mode.redirect, mode.state, token));
+    }
+
+    var back = document.getElementById("back");
+    done.addEventListener("click", function () {
+      if (done.disabled) return;
+      if (step === 1) openDirections();
+      else if (step === 2) showVoice();
+      else finish();
     });
+    if (keyInput) keyInput.addEventListener("input", refreshKeyHint);
+    if (back) {
+      back.addEventListener("click", function () {
+        if (step === 3) showDirectionStep();
+        else showStations();
+      });
+    }
     render();
     showMatches("");
+    var preset = previewSelection(stations, params, mode);
+    if (preset) {
+      selected = preset;
+      render();
+      showMatches(input.value);
+      openDirections();
+    }
+  }
+
+  function previewHidden(params) {
+    var map = {};
+    String(params.get("hide") || "").split(",").forEach(function (part) {
+      var bits = part.split(":");
+      if (bits.length !== 2 || !bits[0] || !bits[1]) return;
+      if (!map[bits[0]]) map[bits[0]] = {};
+      map[bits[0]][bits[1]] = true;
+    });
+    return map;
+  }
+
+  function previewSelection(stations, params, mode) {
+    if (!mode || mode.mode !== "preview") return null;
+    var raw = params.get("stations") || "";
+    if (!raw) return null;
+    var byId = {};
+    stations.forEach(function (station) { byId[station.id] = station; });
+    var picked = [];
+    var seen = {};
+    raw.split(",").forEach(function (id) {
+      id = id.trim();
+      if (!id || seen[id] || !byId[id] || picked.length >= MAX_STATIONS) return;
+      seen[id] = true;
+      picked.push(byId[id]);
+    });
+    return picked.length ? picked : null;
+  }
+
+  var directionsPromise = null;
+
+  function loadDirections() {
+    if (!directionsPromise) {
+      var pending = fetch("directions.json?v=" + CACHE).then(function (response) {
+        if (!response.ok) throw new Error("directions");
+        return response.json();
+      });
+      directionsPromise = pending.then(function (data) {
+        return data;
+      }, function (err) {
+        directionsPromise = null;
+        throw err;
+      });
+    }
+    return directionsPromise;
   }
 
   function errorText(errors) {
@@ -489,6 +813,8 @@
     normalizeName: normalizeName,
     searchStations: searchStations,
     encodeToken: encodeToken,
+    encodeChoices: encodeChoices,
+    choiceFor: choiceFor,
     isAllowedRedirect: isAllowedRedirect,
     validateLaunchQuery: validateLaunchQuery,
     buildRedirect: buildRedirect,
