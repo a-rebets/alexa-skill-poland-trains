@@ -1,8 +1,6 @@
 # My Train Schedule
 
-<!-- After the skill is published, wrap this badge in a link to its Alexa Skills store page:
-     <a href="https://www.amazon.com/dp/SKILL_ASIN"><img ...></a> -->
-<img src="docs/just-ask-alexa-badge.png" alt="Just Ask Alexa" width="190">
+<a href="https://www.amazon.com/dp/B0HP9MZFFM"><img src="docs/just-ask-alexa-badge.png" alt="Just Ask Alexa" width="190"></a>
 
 An Alexa skill for your next trains, now or at a time you choose. It currently supports Poland.
 
