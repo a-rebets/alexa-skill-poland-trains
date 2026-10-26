@@ -866,7 +866,9 @@ def test_launch_and_arrivals_announce_on_a_miss_and_help_does_not(s3, monkeypatc
         _linked_request(token, "IntentRequest", "ArrivalsIntent"),
         _linked_request(token, "IntentRequest", "DeparturesIntent"),
     ):
-        s3.objects.pop(_object_key(), None)
+        # The handler keys clips by the real Warsaw day, so clear every clip.
+        for key in [k for k in s3.objects if k.startswith(voice._CLIP_ROOT)]:
+            del s3.objects[key]
         response = lambda_function.handle(event)
         _assert_one_audio(response["response"]["outputSpeech"]["ssml"])
     assert calls.count(API_ENDPOINT + "/v1/directives") == 3
