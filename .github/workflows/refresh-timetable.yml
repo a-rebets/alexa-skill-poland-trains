@@ -146,10 +146,16 @@ jobs:
       - name: Check the new index works with the deployed skill code
         run: |
           PYTHONPATH=hosted/lambda python3 - <<'PY'
+          from datetime import datetime
           from upcoming_trains.schedule import load
+          from upcoming_trains.timeutil import warsaw_wall_to_utc
           s = load("new-data/schedule.bin")
           assert s.station_name("33506"), "Warszawa Zachodnia is missing"
-          print("index loads with the hosted code:", s.station_name("33506"))
+          end_8am = warsaw_wall_to_utc(datetime(s.feed_end.year, s.feed_end.month, s.feed_end.day, 8, 0))
+          assert s.candidates("33506", end_8am, "departure", when=end_8am), (
+              f"No departures at Warszawa Zachodnia on {s.feed_end} at 08:00"
+          )
+          print("index loads with the hosted code:", s.station_name("33506"), "valid to", s.feed_end)
           PY
 
       - name: Push schedule.bin if the timetable changed
@@ -182,12 +188,24 @@ jobs:
         # retries it, up to twice.
         run: bash scripts/wait_hosted_deploy.sh hosted "${{ steps.push.outputs.pushed }}" "timetable refresh"
 
-      - name: Smoke test the live skill
+      - name: Smoke test the development skill
+        env:
+          FEED_END: ${{ needs.build.outputs.feed_end }}
         run: |
-          python3 scripts/smoke_test.py write request.json
+          python3 scripts/smoke_test.py write request.json --date "$FEED_END"
           ask smapi invoke-skill-end-point -s "$SKILL_ID" -g development --endpoint-region EU \
             --skill-request-body file:request.json > response.json || { cat response.json; exit 1; }
           python3 scripts/smoke_test.py check response.json
+
+      - name: Promote master to prod
+        id: promote
+        run: |
+          python3 scripts/promote_hosted_prod.py hosted --scope data --github-output "$GITHUB_OUTPUT"
+
+      - name: Smoke test the live skill
+        env:
+          FEED_END: ${{ needs.build.outputs.feed_end }}
+        run: bash scripts/wait_live_smoke.sh "${{ steps.promote.outputs.pushed }}" "$FEED_END"
 
   validity:
     # Fails the run (GitHub emails the owner) when the feed runs out within MIN_VALIDITY_DAYS.

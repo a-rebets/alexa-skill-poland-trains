@@ -11,7 +11,10 @@ on:
       - ".github/workflows/deploy-skill.yml"
       - ".github/actions/ask-cli/**"
       - "scripts/sync_hosted_lambda.py"
+      - "scripts/promote_hosted_prod.py"
+      - "scripts/smoke_test.py"
       - "scripts/wait_hosted_deploy.sh"
+      - "scripts/wait_live_smoke.sh"
       - "scripts/install_hosted_hook.sh"
   workflow_dispatch:
     inputs:
@@ -112,10 +115,25 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
         run: bash scripts/wait_hosted_deploy.sh hosted "${{ steps.sync.outputs.pushed }}" "skill code"
 
-      - name: Smoke test the live skill
+      - name: Smoke test the development skill
+        id: dev_smoke
         if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
         run: |
-          python3 scripts/smoke_test.py write request.json
+          feed_end=$(jq -r '.feed_end // empty' hosted/lambda/data/feed.json 2>/dev/null || true)
+          echo "feed_end=$feed_end" >> "$GITHUB_OUTPUT"
+          args=(request.json)
+          if [ -n "$feed_end" ]; then args+=(--date "$feed_end"); fi
+          python3 scripts/smoke_test.py write "${args[@]}"
           ask smapi invoke-skill-end-point -s "$SKILL_ID" -g development --endpoint-region EU \
             --skill-request-body file:request.json > response.json || { cat response.json; exit 1; }
           python3 scripts/smoke_test.py check response.json
+
+      - name: Promote master to prod
+        id: promote
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: |
+          python3 scripts/promote_hosted_prod.py hosted --scope lambda --github-output "$GITHUB_OUTPUT"
+
+      - name: Smoke test the live skill
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: bash scripts/wait_live_smoke.sh "${{ steps.promote.outputs.pushed }}" "${{ steps.dev_smoke.outputs.feed_end }}"

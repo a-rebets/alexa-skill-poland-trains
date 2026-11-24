@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Ask the live development skill for departures at 8 am and check the answer.
+"""Ask an Alexa skill endpoint for departures at 8 am and check the answer.
 
-    python3 scripts/smoke_test.py write request.json
+    python3 scripts/smoke_test.py write request.json [--date YYYY-MM-DD]
     ask smapi invoke-skill-end-point ... --skill-request-body file:request.json > out.json
     python3 scripts/smoke_test.py check out.json
 
 The request carries a v1 account-linking token for Warszawa Zachodnia, the
-station a busy hour always has trains at.
+station a busy hour always has trains at. Passing --date pins that calendar day
+(for example feed_end) so the check fails when the endpoint is serving an older
+timetable.
 """
+from __future__ import annotations
+
+import argparse
 import base64
 import json
 import sys
@@ -19,8 +24,11 @@ STATION = "33506"  # Warszawa Zachodnia
 TOKEN = "v1." + base64.urlsafe_b64encode(json.dumps([STATION]).encode()).decode().rstrip("=")
 
 
-def write(path):
+def write(path: str, date_value: str | None = None) -> None:
     user = {"userId": "amzn1.ask.account.github-smoke", "accessToken": TOKEN}
+    date_slot = {"name": "date", "confirmationStatus": "NONE"}
+    if date_value:
+        date_slot["value"] = date_value
     body = {
         "version": "1.0",
         "session": {
@@ -49,7 +57,7 @@ def write(path):
                 "confirmationStatus": "NONE",
                 "slots": {
                     "time": {"name": "time", "confirmationStatus": "NONE", "value": "08:00"},
-                    "date": {"name": "date", "confirmationStatus": "NONE"},
+                    "date": date_slot,
                 },
             },
         },
@@ -58,7 +66,7 @@ def write(path):
         json.dump(body, handle)
 
 
-def check(path):
+def check(path: str) -> None:
     raw = open(path, encoding="utf-8").read()
     try:
         data = json.loads(raw)
@@ -77,5 +85,20 @@ def check(path):
     print("smoke test passed")
 
 
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_write = sub.add_parser("write", help="Write a DeparturesIntent request JSON")
+    p_write.add_argument("path")
+    p_write.add_argument("--date", help="Optional YYYY-MM-DD date slot value")
+    p_check = sub.add_parser("check", help="Check an invoke-skill-end-point response JSON")
+    p_check.add_argument("path")
+    args = parser.parse_args(argv)
+    if args.cmd == "write":
+        write(args.path, args.date)
+    else:
+        check(args.path)
+
+
 if __name__ == "__main__":
-    {"write": write, "check": check}[sys.argv[1]](sys.argv[2])
+    main()
