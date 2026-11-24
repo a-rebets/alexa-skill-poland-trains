@@ -306,7 +306,7 @@ def test_a_date_outside_the_feed_and_an_expired_today(monkeypatch, sample_feed):
         }
     )
     speech = expired["response"]["outputSpeech"]["ssml"]
-    assert "Rebuild" in speech
+    assert "temporarily out of date" in speech
     assert "isn't available yet" not in speech
 
     class During(datetime):
