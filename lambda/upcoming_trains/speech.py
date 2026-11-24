@@ -279,9 +279,10 @@ def line_label(route: str, agency: str, bus: bool) -> tuple:
 
 def expired_message(feed_start, feed_end, today) -> str:
     return (
-        f"The timetable built into this skill covers {speak_date(feed_start)} "
-        f"through {speak_date(feed_end)}, and today is {speak_date(today)}. "
-        "Rebuild the schedule on your computer and deploy the skill again."
+        "The train timetable is temporarily out of date. "
+        f"It covers {speak_date(feed_start)} through {speak_date(feed_end)}, "
+        f"and today is {speak_date(today)}. "
+        "Please try again later."
     )
 
 

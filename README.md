@@ -41,7 +41,7 @@ The station list (`stations.js`, `stations.json`) and the per-station directions
 1. Downloads the [Polish Trains GTFS](https://mkuran.pl/gtfs/) feed, which is regenerated daily from PKP PLK data, so diversions and closures show up once PLK publishes them.
 2. Runs `scripts/build_data.py`, which writes the picker files and the skill's compact timetable (`schedule.bin`). `lambda/upcoming_trains/` holds the few skill modules the build needs.
 3. Publishes the picker with GitHub Pages. The cache-busting version gets a digest of that week's data appended.
-4. Pushes `schedule.bin` to the Alexa-hosted skill when the timetable changed, waits for the deploy, and asks the skill for departures as a smoke test.
+4. Pushes `schedule.bin` to the Alexa-hosted skill (`master` for development, then promoted to `prod` for live) when the timetable changed, waits for the deploy, and smoke-tests departures on both development and live.
 5. Fails, so GitHub sends an email, if any step breaks or the feed's calendar ends within 10 days.
 
 To build locally: `python3 scripts/build_data.py --out build/lambda/data/schedule.bin --picker-dir .` (Python 3.10+, standard library only).

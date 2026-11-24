@@ -770,3 +770,14 @@ def _break_seconds(value: str) -> float:
     if value.endswith("ms"):
         return float(value[:-2]) / 1000.0
     return float(value[:-1])
+
+
+def test_expired_message_is_public_facing():
+    text = expired_message(date(2026, 10, 22), date(2026, 11, 21), date(2026, 11, 25))
+    assert "October 22, 2026" in text
+    assert "November 21, 2026" in text
+    assert "November 25, 2026" in text
+    assert "out of date" in text.lower()
+    assert "try again later" in text.lower()
+    assert "computer" not in text.lower()
+    assert "deploy" not in text.lower()
